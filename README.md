@@ -119,3 +119,27 @@ So these rmd are used to create the "cleaned data" we will work on.
 We will use 3 more rmd, called as such : avo mean.rmd, avo sd.rmd, avo mean sd.rmd.
 In those rmds, we have made the alr transformation, scaled the data, took the mean, the cube root sd and both, and then created splits and folds. Before, we would have added the eruptions of vei 7.
 To what use ? --> to use those data for prediction models.
+
+
+### GVP
+
+We can't really use GVP alone, it needs to be paired with the info of GEOROC if we want to do something with it. 
+What is the most logical thing to do is to only keep the "Confirmed Eruption" and then create different rmd according to the VEI we want to work with. Then, search in the LOCATION/LOCATION COMMENT of GEOROC the name of the volcano from GVP to somewhat link the two.
+
+We did that for the VEI 7, and we could do that for the other VEI, but there is a lot of eruptions of VEI 6 already and we need to check which samples of GEOROC are really linked to the eruption provided by GVP. 
+What I mean is that since the only way to efficiently "link" GVP and GEOROC is to search for the Volcano Name of GVP in the LOCATION/LOCATION COMMENT, errors can be made and it will not distinct/classify the samples according to the VEI of the eruptions. It can't do that, it will only link the samples to a volcano and not an eruption and we want the samples to be linked to an eruption first.
+So, to do that, we need to look manually at the references of each sample and check what is the origin of each sample. 
+Since there hasn't been a lot of VEI 7 eruption, it was quite alright to do, but even from VEI 6, this is very hard, since there are a lot more references to check.
+
+So you need to use the data for the vei 7 provided here, or you can do it by hand again if you use a newer version of the GVP and GEOROC. 
+
+I will leave the rmd for inspiration. 
+
+The data you should use is rocks_all_info_vei_7.csv.
+
+
+
+
+
+
+
