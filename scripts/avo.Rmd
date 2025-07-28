@@ -25,22 +25,14 @@ At this point, I have 80 unique eruptions for 30 unique volcanoes and 1226 sampl
  
  
 Then I completed the oxides if some oxides value was missing : 
- 
-(Clean oxide and Total-majors columns by extracting numeric values.)
 
 For each row:
 
-- If exactly 1 oxide value is missing → impute it so that the sum equals 100%. and if its negative value then put 0
-- If exactly 2 oxide values are missing → normalize existing values to sum to 100%.
-- If more than 2 oxide values are missing → discard the row.
+If one of the ten major oxides is missing, then delete the entire row. 
 
-Finally, update Total-majors only if it's missing, using the sum of oxide values.
+Dont use Total-Majors, create a new column sum_oxide and calculate here.
 
-
-I dropped all the rows where the sum_oxide is less than 95% and more than 100.5%.
-
-We use sum_oxide and not total-majors.
-
+I dropped all the rows where the sum_oxide is less than 96% and more than 102%.
 
 eruption_summary is created by counting the nb of samples for each eruption. 
 
@@ -123,19 +115,6 @@ avo <- avo %>%
 
 ```
 
-
-this code works but it doesn't include to keep the 'Ref traces' columns.
-```{r, eval=FALSE}
-# Trouver la position de la colonne "Total-majors"
-idx_ref_majors <- which(names(avo) == "REF majors")
-
-# Garder uniquement les colonnes jusqu'à "REF majors" inclus
-avo <- avo[, 1:idx_ref_majors]
-
-# Aperçu
-#glimpse(avo)
-
-```
 
 
 ```{r}
@@ -253,7 +232,7 @@ length(unique(avo_with_confirmed_eruption$Eruption))
 length(unique(avo_with_confirmed_eruption$Volcano))
 ```
 
-
+so 80 confirmed eruptions from 30 unique volcanoes
 
 lets calculte how many samples each volcano has
 
@@ -284,24 +263,6 @@ nb_sample_by_eruption <- avo_with_confirmed_eruption %>%
 ```
 
 
-lets see both (eh)
-
-```{r}
-nb_sample_by_eruption_with_volcano <- avo_with_confirmed_eruption %>%
-  count(Volcano, Eruption, name = "Nb_echantillons") %>%
-  arrange(desc(Nb_echantillons))
-
-nb_eruption_by_volcano <- avo_with_confirmed_eruption %>%
-  distinct(Volcano, Eruption) %>%  # Retirer les doublons Volcano–Eruption
-  count(Volcano, name = "Nb_eruption") %>%  # Compter les éruptions par volcan
-  arrange(desc(Nb_eruption))  # Trier du plus grand au plus petit
-
-
-# no need
-#write.csv(nb_eruption_by_volcano, "/Users/annad/Documents/NZ Internship/nb_eruption_by_volcano.csv", row.names = FALSE)
-
-```
-
 
 17/07/25
 
@@ -328,91 +289,7 @@ avo_with_missing_oxides <- avo_with_confirmed_eruption %>%
 
 # Clean oxide and Total-majors columns by extracting numeric values.
 # For each row:
-# - If exactly 1 oxide value is missing → impute it so that the sum equals 100%. and if its negative value then put 0
-# - If exactly 2 oxide values are missing → normalize existing values to sum to 100%.
-# - If more than 2 oxide values are missing → discard the row.
-# Finally, update Total-majors only if it's missing, using the sum of oxide values.
-
-
-```{r, eval=FALSE}
-
-# udpate 04/06/25
-
-library(dplyr)
-library(tidyr)
-library(purrr)
-
-# Force the oxides to be numeric type
-
-avo_with_confirmed_eruption <- avo_with_confirmed_eruption %>%
-  mutate(across(all_of(oxydes_keywords), ~ as.numeric(.)))
-
-### UPDATE 06/06/25
-
-# 1. Extract the nb
-extract_last_number <- function(x) {
-  str_extract(x, "\\d+(\\.\\d+)?$") %>% as.numeric()
-}
-
-avo_with_confirmed_eruption <- avo_with_confirmed_eruption %>%
-  mutate(across(all_of(c(oxydes_keywords, "Total-majors")), extract_last_number))
-
-# 2. select the oxides
-oxydes_only <- avo_with_confirmed_eruption %>%
-  dplyr::select(all_of(oxydes_keywords)) %>%
-  as.data.frame()
-
-# 3. Function with two objectives : imputation, normalisation or NA
-impute_or_normalize <- function(x) {
-  na_count <- sum(is.na(x))
-  
-  if (na_count == 1) {
-    missing_pos <- which(is.na(x))
-    sum_non_missing <- sum(x, na.rm = TRUE)
-    valeur_imputee <- 100 - sum_non_missing
-    #x[missing_pos] <- ifelse(valeur_imputee < 0, 0, valeur_imputee). ------> pb with the alr transformation otherwise
-    x[missing_pos] <- ifelse(valeur_imputee < 1e-4, 1e-4, valeur_imputee)
-    
-  } else if (na_count == 2) {
-    sum_non_missing <- sum(x, na.rm = TRUE)
-    x <- x / sum_non_missing * 100
-    
-  } else if (na_count > 2) {
-    x[] <- NA
-  }
-  
-  return(x)
-}
-
-# 4. Apply to each row
-oxydes_imputed <- as.data.frame(t(apply(oxydes_only, 1, impute_or_normalize)))
-colnames(oxydes_imputed) <- oxydes_keywords
-
-# 5. delete rows where there are still NAs
-ligne_valide <- complete.cases(oxydes_imputed)
-oxydes_imputed <- oxydes_imputed[ligne_valide, ]
-avo_with_confirmed_eruption <- avo_with_confirmed_eruption[ligne_valide, ]
-
-# 6. replace oxides in AVO
-avo_with_confirmed_eruption <- avo_with_confirmed_eruption %>%
-  dplyr::select(-all_of(oxydes_keywords)) %>%
-  bind_cols(oxydes_imputed)
-
-# 7. update "Total-majors" if NA
-avo_with_confirmed_eruption <- avo_with_confirmed_eruption %>%
-  mutate(`Total-majors` = ifelse(
-    is.na(`Total-majors`),
-    rowSums(across(all_of(oxydes_keywords)), na.rm = TRUE),
-    `Total-majors`
-  ))
-
-
-```
-
-
-
-#####################################################################################################################################################################################################################################
-
+ if one of the ten oxides is missing then delete row.
 
 update 06/06/25
 
@@ -428,10 +305,10 @@ avo_somme_check <- avo_with_confirmed_eruption2 %>%
   mutate(somme_oxydes = rowSums(across(all_of(oxydes_cols)), na.rm = TRUE))
 
 # extract the rows where the sum is not right
-oxydes_trop_faibles <- avo_somme_check %>%
+oxydes_too_low <- avo_somme_check %>%
   dplyr::filter(somme_oxydes < 96)
 
-oxydes_trop_fortes <- avo_somme_check %>%
+oxydes_too_high <- avo_somme_check %>%
   dplyr::filter(somme_oxydes > 102)
 
 ```
@@ -444,9 +321,7 @@ lets drop them
 # delete the rows when the sum of oxides is not right
 avo_with_confirmed_eruption2 <- avo_with_confirmed_eruption2 %>%
   mutate(somme_oxydes = rowSums(across(all_of(oxydes_cols)), na.rm = TRUE)) %>%
-  dplyr::filter(somme_oxydes >= 96 & somme_oxydes <= 102) #%>%
-  #select(-somme_oxydes)  # Enlever la colonne temporaire si tu ne veux pas la garder
-
+  dplyr::filter(somme_oxydes >= 96 & somme_oxydes <= 102) 
 ```
 
 
@@ -465,6 +340,9 @@ length(unique(avo_with_confirmed_eruption2$Volcano))
 
 ```
 
+so 77 confirmed eruptions from 28 unique volcanoes
+
+
 
 
 lets see a summary of the nb of samples by eruption
@@ -477,21 +355,6 @@ eruption_summary <- avo_with_confirmed_eruption2 %>%
 print(eruption_summary)
 
 ```
-
-
-
-nb of volcano with existing eruptions
-
-```{r}
-number_of_volcanoes <- avo_with_confirmed_eruption2 %>%
-  distinct(Volcano) %>%
-  nrow()
-
-print(number_of_volcanoes)
-
-```
-
-number_of_volcanoes volcanoes with existing eruptions
 
 
 lets add the volcano name to the eruption_summary.
@@ -630,7 +493,7 @@ CHECK WITH SOMEONE WHO KNOWS
 
 
 # list of eruptions to delete
-eruptions_a_supprimer <- c(
+eruptions_to_delete <- c(
   "Pakushin cone 22000 yBP", # 7
   "Aniakchak Black Nose Pumice", # 4
   "Augustine Tephra I", # 3
@@ -653,7 +516,7 @@ eruptions_a_supprimer <- c(
 )
 
 eruption_summary <- eruption_summary %>%
-  dplyr::filter(!Eruption %in% eruptions_a_supprimer)
+  dplyr::filter(!Eruption %in% eruptions_to_delete)
 
 ```
 
@@ -703,7 +566,7 @@ ggplot(data = eruption_summary %>% dplyr::filter(!is.na(VEI)), aes(x = as.factor
 maybe dont keep vei 0 here ?? --> i deleted it --> i kept them to put them with vei 1 and 2
 
 
-lets filter eruption summary out of avo_with_confirmed_eruption
+lets filter eruption summary out of avo_with_confirmed_eruption2
 
 ```{r}
 
@@ -731,27 +594,21 @@ avo_filtered <- as.data.frame(avo_with_confirmed_eruption_and_vei)
 lets create a df where it summarize the data by eruption.
 
 ```{r}
-oxydes <- c("SiO2", "TiO2", "Al2O3", "FeOT", "MnO", "MgO", "CaO", "Na2O", "K2O", "P2O5")
 
-
-# Résumé par éruption : moyenne des alr standardisées
-eruption_summary <- avo_filtered %>%
+eruption_summary_2 <- avo_filtered %>%
   group_by(Eruption) %>%
-  summarise(
-    VEI = unique(VEI),  # on suppose 1 VEI par éruption
-    n_samples = n(),
-    across(
-      all_of(oxydes),
-      list(mean = ~mean(.x, na.rm = TRUE),
-           sd   = ~sd(.x, na.rm = TRUE))
-    ),
-    .groups = "drop"
-  )
+  summarise(Number_of_Samples = n(),
+            `Volcano Name` = paste(unique(Volcano), collapse = ", "),
+            .groups = "drop") %>%
+  arrange(desc(Number_of_Samples))
+
+print(eruption_summary_2)
+
 
 ```
 
 
-I have 15 eruptions where i only have 1 sample. 
+I have 16 eruptions where i only have 1 sample. 
 
 
 update 26/06/25 : i will try to add samples for the eruptions with only one.
@@ -1096,14 +953,13 @@ lets find the volcanoes of avo in gvp_holocene_list
 
 
 ```{r}
-# 1. Extraire la liste des noms de volcans depuis avo_alr_scaled
+# take the names of the volcanoes from avo_filtered
 avo_volcano_names <- unique(avo_filtered$Volcano)
 
-# 2. Filtrer les volcans du GVP qui apparaissent dans la liste des volcans d'AVO
+# filter the volcanoes from gvp who are in the list of the volcanoes from avo_filtered
 gvp_avo_matches <- gvp_holocene_list %>%
   dplyr::filter(`Volcano Name` %in% avo_volcano_names)
 
-# 3. Aperçu du résultat
 print(gvp_avo_matches)
 
 ```
@@ -1213,5 +1069,6 @@ download avo_filtered
 #write_csv(avo_filtered, "/Users/annad/Documents/NZ Internship/avo_filtered.csv")
 ```
 
+finished commenting on 29/07/25
 
 
