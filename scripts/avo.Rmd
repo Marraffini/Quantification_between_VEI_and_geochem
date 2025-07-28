@@ -1,0 +1,1217 @@
+---
+title: "avo"
+output: html_document
+date: "2025-05-21"
+---
+
+Description :
+
+I used the avo.csv that was downloaded from the website, this is the raw data. 
+
+In this script, I will clean to the best I can the samples. 
+At the end, we will get a csv with the confirmed eruption and vei.
+
+
+
+avo_with_confirmed_eruption_and_vei is created in the rmd avo and constructed as such :
+
+- only keep useful columns
+- delete rows where the 10 majors oxides are all NA
+- clean some rows (sometimes in oxides, there was text before the data nb so i got rid of the text)
+- i filtered and drop the volcanoes that weren't volcanoes
+- i only kept the existing eruption (so if it was NA, i dropped)
+ 
+At this point, I have 80 unique eruptions for 30 unique volcanoes and 1226 samples.
+ 
+ 
+Then I completed the oxides if some oxides value was missing : 
+ 
+(Clean oxide and Total-majors columns by extracting numeric values.)
+
+For each row:
+
+- If exactly 1 oxide value is missing → impute it so that the sum equals 100%. and if its negative value then put 0
+- If exactly 2 oxide values are missing → normalize existing values to sum to 100%.
+- If more than 2 oxide values are missing → discard the row.
+
+Finally, update Total-majors only if it's missing, using the sum of oxide values.
+
+
+I dropped all the rows where the sum_oxide is less than 95% and more than 100.5%.
+
+We use sum_oxide and not total-majors.
+
+
+eruption_summary is created by counting the nb of samples for each eruption. 
+
+View of eruption summary : 
+
+Eruption            nb of samples         Volcano Name
+
+Novarupta 1912/6	  290	                  Katmai, Novarupta		
+Aniakchak 1931/5	  107	                  Aniakchak		
+Redoubt 1989/12	    90	                  Redoubt		
+Augustine 2005/12	  89	                  Augustine		
+Trident 1953/2	    88                  	Trident
+
+
+Then I searched the VEI of every eruption (so far, we have 80 unique eruptions) and added it in eruption_summary.
+
+I checked with Mark, then I deleted some eruptions where I couldn't find the VEI. 
+--> So I dropped 17 eruptions, and it was linked to 41 rows (to drop), so we went from 1226 samples to 1185 samples.
+--> We have now 63 eruptions from 29 volcanoes. 
+
+
+I filtered out eruption_summary from avo_with_confirmed_eruption to create avo_with_confirmed_eruption_and_vei.
+--> i used the eruption column and join/left join
+
+
+Therefore, avo_with_confirmed_eruption_and_vei was created. 
+
+Then avo_filtered is the same as avo_with_confirmed_eruption_and_vei, but we added more samples when we could find them and added the type of volcanoes (caldera, stratovolcano, etc...).
+
+
+
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+library(readxl)
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(recipes)
+library(caret)
+library(stats)
+library(car)
+library(broom)
+library(MASS)
+library(janitor)
+library(dplyr)
+library(readr)
+library(purrr)
+
+```
+
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+
+avo <- read_csv("/Users/annad/Documents/NZ Internship/AVO_GEOCHEM_21052025.csv", show_col_types = FALSE)
+
+```
+
+
+
+
+
+```{r}
+colnames(avo)
+
+```
+
+so there are a lot of columns, lots we dont need, so lets keep the ones we actually need. 
+
+
+
+drop the columns with stdev, origins and units and delete rows after ref majors. 
+
+```{r}
+
+# delete the columns with "stdev", "orig" or "Units"
+avo <- avo %>%
+  dplyr::select(-matches("stdev|orig|Units", ignore.case = TRUE))
+
+```
+
+
+this code works but it doesn't include to keep the 'Ref traces' columns.
+```{r, eval=FALSE}
+# Trouver la position de la colonne "Total-majors"
+idx_ref_majors <- which(names(avo) == "REF majors")
+
+# Garder uniquement les colonnes jusqu'à "REF majors" inclus
+avo <- avo[, 1:idx_ref_majors]
+
+# Aperçu
+#glimpse(avo)
+
+```
+
+
+```{r}
+# Keep columns up to "REF majors" + explicitly add "REF traces"
+avo <- avo %>%
+  dplyr::select(1:which(names(avo) == "REF majors"), `Ref trace`)
+
+```
+
+
+
+```{r}
+# major oxides
+oxydes_keywords <- c("SiO2", "TiO2", "Al2O3", "FeOT", "MnO", "MgO", 
+                     "CaO", "Na2O", "K2O", "P2O5")
+
+# identify the columns containing those words (the oxides)
+oxydes_cols <- names(avo)[str_detect(names(avo), paste(oxydes_keywords, collapse = "|"))]
+
+# to keep track
+n_before <- nrow(avo)
+
+# delete the rows where all the oxides are NA
+avo <- avo %>%
+  dplyr::filter(rowSums(!is.na(dplyr::select(., all_of(oxydes_cols)))) > 0)
+
+n_after <- nrow(avo)
+
+# show how many rows are deleted
+cat("nb of rows deleted :", n_before - n_after, "\n") 
+cat("nb of remaining rows  :", n_after, "\n") 
+
+```
+
+
+
+there's some text in the oxides columns so lets delete those rows --> update 06/06/25 : WE JUST DROP THE TEXT BEFORE THE NB
+
+```{r}
+
+# update 06/06/25
+
+library(dplyr)
+library(stringr)
+
+# function to extract the last decimal nb in a character chain
+extract_last_number <- function(x) {
+  str_extract(x, "\\d+\\.\\d+$") %>% as.numeric()
+}
+
+
+# use the function on "Total-majors"
+colonnes_total_majors <- c(oxydes_cols, "Total-majors")
+
+# lets clean
+avo <- avo %>%
+  dplyr::mutate(across(all_of(colonnes_total_majors), ~ extract_last_number(.)))
+
+
+
+```
+
+
+update 06/06/25
+
+
+lets filter the volcanoes that arent volcanoes (really this part you have to change by hand by adding more volcanoes if you use a newer version of the avo.csv (i dont think you can delete some volcanoes though))
+
+```{r}
+#unique(avo$Volcano)
+
+library(dplyr)
+
+# list of "fake volcanoes" to delete 
+volcans_invalides <- c(
+  "Stepovak Bay 1", "Stepovak Bay 2", "Stepovak Bay 3",
+  "Moffett Parasitic Cone", "Chetaslina Vent",
+  "Cone 3110", "Cone 3601", "Cone B", "Cone D",
+  "Parasite 1", "Parasite 2", "70B29", "Three-quarter cone",
+  "St. George Volcanic Field", "Gas Rocks, the", "The Gas Rocks",
+  "Lone Basalt", "Mafic Knob 500", "Knob 1000",
+  "Emmons Lake Volcanic Center", "Monogenetic QT vents of WWVF",
+  "Ingenstrem Depression Volcanic Field", "Up South", "Down South",
+  "Back West", "Qtz-Ol-And vent", "Qtz-Ol-And Vent", "Basalt of Gertrude Creek",
+  "Capital", "Willy", "Muffin", "Madonna", "Dwight East"
+)
+
+# lets clean
+avo <- avo %>%
+  dplyr::filter(!is.na(Volcano)) %>%                             # delete NA
+  dplyr::filter(!Volcano %in% volcans_invalides) %>%             # delete fake volcanoes
+  mutate(Volcano = droplevels(as.factor(Volcano)))      
+
+
+# show
+unique(avo$Volcano)
+
+length(unique(avo$Volcano))
+
+```
+
+
+
+lets filter when the eruption is missing, as it will be easier in the future
+(we could search for the eruption for the samples that dont have one, but this would take so much time. and its really hard.
+
+```{r}
+avo_with_confirmed_eruption <- avo %>% 
+  dplyr::filter(!is.na(Eruption))
+
+
+length(unique(avo_with_confirmed_eruption$Eruption))
+```
+```{r}
+length(unique(avo_with_confirmed_eruption$Volcano))
+```
+
+
+
+lets calculte how many samples each volcano has
+
+```{r}
+nb_sample_by_volcano <- avo_with_confirmed_eruption %>%
+  count(Volcano, name = "Nb_echantillons") %>%
+  arrange(desc(Nb_echantillons))
+
+
+# no real need to write the csv
+#write.csv(nb_sample_by_volcano, "/Users/annad/Documents/NZ Internship/nb_sample_by_volcano.csv")
+
+```
+
+
+lets calculate how many samples each eruption has
+
+```{r}
+nb_sample_by_eruption <- avo_with_confirmed_eruption %>%
+  count(Eruption, name = "Nb_echantillons") %>%
+  arrange(desc(Nb_echantillons))
+
+
+# no need to write the csv
+#write.csv(nb_sample_by_eruption, "/Users/annad/Documents/NZ Internship/nb_sample_by_eruption.csv")
+
+
+```
+
+
+lets see both (eh)
+
+```{r}
+nb_sample_by_eruption_with_volcano <- avo_with_confirmed_eruption %>%
+  count(Volcano, Eruption, name = "Nb_echantillons") %>%
+  arrange(desc(Nb_echantillons))
+
+nb_eruption_by_volcano <- avo_with_confirmed_eruption %>%
+  distinct(Volcano, Eruption) %>%  # Retirer les doublons Volcano–Eruption
+  count(Volcano, name = "Nb_eruption") %>%  # Compter les éruptions par volcan
+  arrange(desc(Nb_eruption))  # Trier du plus grand au plus petit
+
+
+# no need
+#write.csv(nb_eruption_by_volcano, "/Users/annad/Documents/NZ Internship/nb_eruption_by_volcano.csv", row.names = FALSE)
+
+```
+
+
+17/07/25
+
+here lets see how many samples are left after we drop when we dont have all ten oxides
+
+```{r}
+avo_with_confirmed_eruption2 <- avo_with_confirmed_eruption %>%
+  dplyr::filter(if_all(all_of(oxydes_keywords), ~ !is.na(.)))
+
+
+
+avo_with_missing_oxides <- avo_with_confirmed_eruption %>%
+  dplyr::filter(if_any(all_of(oxydes_keywords), ~ is.na(.)))
+
+```
+
+
+
+
+
+
+#####################################################################################################################################################################################################################################
+
+
+# Clean oxide and Total-majors columns by extracting numeric values.
+# For each row:
+# - If exactly 1 oxide value is missing → impute it so that the sum equals 100%. and if its negative value then put 0
+# - If exactly 2 oxide values are missing → normalize existing values to sum to 100%.
+# - If more than 2 oxide values are missing → discard the row.
+# Finally, update Total-majors only if it's missing, using the sum of oxide values.
+
+
+```{r, eval=FALSE}
+
+# udpate 04/06/25
+
+library(dplyr)
+library(tidyr)
+library(purrr)
+
+# Force the oxides to be numeric type
+
+avo_with_confirmed_eruption <- avo_with_confirmed_eruption %>%
+  mutate(across(all_of(oxydes_keywords), ~ as.numeric(.)))
+
+### UPDATE 06/06/25
+
+# 1. Extract the nb
+extract_last_number <- function(x) {
+  str_extract(x, "\\d+(\\.\\d+)?$") %>% as.numeric()
+}
+
+avo_with_confirmed_eruption <- avo_with_confirmed_eruption %>%
+  mutate(across(all_of(c(oxydes_keywords, "Total-majors")), extract_last_number))
+
+# 2. select the oxides
+oxydes_only <- avo_with_confirmed_eruption %>%
+  dplyr::select(all_of(oxydes_keywords)) %>%
+  as.data.frame()
+
+# 3. Function with two objectives : imputation, normalisation or NA
+impute_or_normalize <- function(x) {
+  na_count <- sum(is.na(x))
+  
+  if (na_count == 1) {
+    missing_pos <- which(is.na(x))
+    sum_non_missing <- sum(x, na.rm = TRUE)
+    valeur_imputee <- 100 - sum_non_missing
+    #x[missing_pos] <- ifelse(valeur_imputee < 0, 0, valeur_imputee). ------> pb with the alr transformation otherwise
+    x[missing_pos] <- ifelse(valeur_imputee < 1e-4, 1e-4, valeur_imputee)
+    
+  } else if (na_count == 2) {
+    sum_non_missing <- sum(x, na.rm = TRUE)
+    x <- x / sum_non_missing * 100
+    
+  } else if (na_count > 2) {
+    x[] <- NA
+  }
+  
+  return(x)
+}
+
+# 4. Apply to each row
+oxydes_imputed <- as.data.frame(t(apply(oxydes_only, 1, impute_or_normalize)))
+colnames(oxydes_imputed) <- oxydes_keywords
+
+# 5. delete rows where there are still NAs
+ligne_valide <- complete.cases(oxydes_imputed)
+oxydes_imputed <- oxydes_imputed[ligne_valide, ]
+avo_with_confirmed_eruption <- avo_with_confirmed_eruption[ligne_valide, ]
+
+# 6. replace oxides in AVO
+avo_with_confirmed_eruption <- avo_with_confirmed_eruption %>%
+  dplyr::select(-all_of(oxydes_keywords)) %>%
+  bind_cols(oxydes_imputed)
+
+# 7. update "Total-majors" if NA
+avo_with_confirmed_eruption <- avo_with_confirmed_eruption %>%
+  mutate(`Total-majors` = ifelse(
+    is.na(`Total-majors`),
+    rowSums(across(all_of(oxydes_keywords)), na.rm = TRUE),
+    `Total-majors`
+  ))
+
+
+```
+
+
+
+#####################################################################################################################################################################################################################################
+
+
+update 06/06/25
+
+lets see the values :
+
+- < 96% (too low)
+
+- > 102% (too high)
+
+```{r}
+# calculate the sum of oxides by row
+avo_somme_check <- avo_with_confirmed_eruption2 %>%
+  mutate(somme_oxydes = rowSums(across(all_of(oxydes_cols)), na.rm = TRUE))
+
+# extract the rows where the sum is not right
+oxydes_trop_faibles <- avo_somme_check %>%
+  dplyr::filter(somme_oxydes < 96)
+
+oxydes_trop_fortes <- avo_somme_check %>%
+  dplyr::filter(somme_oxydes > 102)
+
+```
+
+
+
+lets drop them
+
+```{r}
+# delete the rows when the sum of oxides is not right
+avo_with_confirmed_eruption2 <- avo_with_confirmed_eruption2 %>%
+  mutate(somme_oxydes = rowSums(across(all_of(oxydes_cols)), na.rm = TRUE)) %>%
+  dplyr::filter(somme_oxydes >= 96 & somme_oxydes <= 102) #%>%
+  #select(-somme_oxydes)  # Enlever la colonne temporaire si tu ne veux pas la garder
+
+```
+
+
+end update 06/06/25
+
+
+
+update 04/06/25
+
+for now lets keep "total-majors" but dont use it bc some sums are not correct (not my fault)
+
+```{r}
+length(unique(avo_with_confirmed_eruption2$Eruption))
+length(unique(avo_with_confirmed_eruption2$Volcano))
+
+
+```
+
+
+
+lets see a summary of the nb of samples by eruption
+```{r}
+eruption_summary <- avo_with_confirmed_eruption2 %>%
+  group_by(Eruption) %>%
+  summarise(Number_of_Samples = n()) %>%
+  arrange(desc(Number_of_Samples))
+
+print(eruption_summary)
+
+```
+
+
+
+nb of volcano with existing eruptions
+
+```{r}
+number_of_volcanoes <- avo_with_confirmed_eruption2 %>%
+  distinct(Volcano) %>%
+  nrow()
+
+print(number_of_volcanoes)
+
+```
+
+number_of_volcanoes volcanoes with existing eruptions
+
+
+lets add the volcano name to the eruption_summary.
+
+```{r}
+
+eruption_summary <- avo_with_confirmed_eruption2 %>%
+  group_by(Eruption) %>%
+  summarise(Number_of_Samples = n(),
+            `Volcano Name` = paste(unique(Volcano), collapse = ", "),
+            .groups = "drop") %>%
+  arrange(desc(Number_of_Samples))
+
+print(eruption_summary)
+
+
+```
+
+
+
+lets create a vei column
+```{r}
+eruption_summary$VEI <- NA_real_
+```
+
+
+lets add the vei (maybe we can find a more efficient way to do that ??)
+this step you have to do by hand, you have to search every eruption vei by hand
+
+```{r}
+eruption_summary$VEI[eruption_summary$Eruption == "Novarupta 1912/6"] <- 6
+eruption_summary$VEI[eruption_summary$Eruption == "Aniakchak 1931/5"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Redoubt 1989/12"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine 2005/12"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Trident 1953/2"] <- 3
+
+eruption_summary$VEI[eruption_summary$Eruption == "Redoubt 2009/3"] <- 3 #6
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine 1986/3"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Fisher Tuff/Funk Ash/CFE"] <- 6
+eruption_summary$VEI[eruption_summary$Eruption == "Kaguyak CFE"] <- 5
+eruption_summary$VEI[eruption_summary$Eruption == "Bogoslof 2016/12"] <- 3
+
+eruption_summary$VEI[eruption_summary$Eruption == "Okmok CFE II"] <- 6 # 11
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine 1976/1"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Okmok CFE I"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Ahmanilix 2008/7"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Mt Churchill White River East Lobe"] <- 6
+
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine 1883/10"] <- 4 # 16
+eruption_summary$VEI[eruption_summary$Eruption == "Gareloi 1929/4"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Kasatochi 2008/8"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Ukinrek Maars 1977/3"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Makushin Driftwood Pumice"] <- 4
+
+eruption_summary$VEI[eruption_summary$Eruption == "Akutan 1978/9"] <- 2 #21
+eruption_summary$VEI[eruption_summary$Eruption == "Veniaminof 2018/09"] <- 2
+eruption_summary$VEI[eruption_summary$Eruption == "Pavlof 1996/9"] <- 2
+eruption_summary$VEI[eruption_summary$Eruption == "Pavlof 2016/3"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine 1963/10"] <- 2
+
+eruption_summary$VEI[eruption_summary$Eruption == "Bogoslof 1992/7"] <- 3 # 26
+eruption_summary$VEI[eruption_summary$Eruption == "Pakushin cone 22000 yBP"] <- "might be too old to have vei"
+eruption_summary$VEI[eruption_summary$Eruption == "Aniakchak CFE I"] <- 6
+eruption_summary$VEI[eruption_summary$Eruption == "Bogoslof 1926/7"] <- 2
+eruption_summary$VEI[eruption_summary$Eruption == "Cone A 1997/2"] <- 3
+
+eruption_summary$VEI[eruption_summary$Eruption == "Aniakchak Black Nose Pumice"] <- "????" # 31
+eruption_summary$VEI[eruption_summary$Eruption == "Crater Peak 1992/8"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Crater Peak 1992/9"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Kanaga 1906/5"] <- 0 
+eruption_summary$VEI[eruption_summary$Eruption == "Makushin Lava Ramp"] <- 0
+
+eruption_summary$VEI[eruption_summary$Eruption == "Pavlof 2014/5"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine 1812"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine 1935/3"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Bogoslof 1796/5"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Akutan 1929/6"] <- 2
+
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine Tephra I"] <- "??????"
+eruption_summary$VEI[eruption_summary$Eruption == "Cone A 1945/6"] <- 2
+eruption_summary$VEI[eruption_summary$Eruption == "Crater Peak 1953/7"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Makushin Koriga Point Flows"] <- 0
+eruption_summary$VEI[eruption_summary$Eruption == "Okmok Middle Scoria"] <- 5
+
+eruption_summary$VEI[eruption_summary$Eruption == "Redoubt 1966/1"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Shishaldin 1999/2"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Aniakchak CFE II"] <- 6
+eruption_summary$VEI[eruption_summary$Eruption == "Aniakchak Vent Mountain Lava Flows"] <- "????"
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine Tephra C"] <- "?????"
+
+eruption_summary$VEI[eruption_summary$Eruption == "Cone A 1958/8"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Crater Peak 1992/6"] <- 4
+eruption_summary$VEI[eruption_summary$Eruption == "Pavlof 2013/5"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Pavlof 2014/11"] <- 1
+eruption_summary$VEI[eruption_summary$Eruption == "Pyre Peak 1977/3"] <- 1
+
+eruption_summary$VEI[eruption_summary$Eruption == "Westdahl 1991/11"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Akutan 1911"] <- 2
+eruption_summary$VEI[eruption_summary$Eruption == "Akutan CFE/Akutan Tephra"] <- 5
+eruption_summary$VEI[eruption_summary$Eruption == "Aniakchak Half Cone Pink and Brown Pumice"] <- 5
+eruption_summary$VEI[eruption_summary$Eruption == "Aniakchak Half Cone Upper Pumice"] <- "????"
+
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine Tephra G"] <- "???"
+eruption_summary$VEI[eruption_summary$Eruption == "Augustine Tephra H"] <- "???"
+eruption_summary$VEI[eruption_summary$Eruption == "Bogoslof 1883/8"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Chiginagak 2005/5"] <- "not an eruption"
+eruption_summary$VEI[eruption_summary$Eruption == "Cone A 1986/11"] <- 2
+
+eruption_summary$VEI[eruption_summary$Eruption == "Edgecumbe Tephra set (includes Mount Edgecumbe Dacite (MEd) Tephra)"] <- 6
+eruption_summary$VEI[eruption_summary$Eruption == "Great Sitkin 1974/2"] <- 2
+eruption_summary$VEI[eruption_summary$Eruption == "Hayes Tephra A"] <- "????"
+eruption_summary$VEI[eruption_summary$Eruption == "Hayes Tephra Set H"] <- 5
+eruption_summary$VEI[eruption_summary$Eruption == "Kanaga 1994/1"] <- 2
+
+eruption_summary$VEI[eruption_summary$Eruption == "Mt Churchill White River North Lobe"] <- 6
+eruption_summary$VEI[eruption_summary$Eruption == "Pavlof 1986/4"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Shishaldin 1824"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Sirius Point 1962/1"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Trident 44000 yBP"] <- "too old ?"
+
+eruption_summary$VEI[eruption_summary$Eruption == "Trident 73000 yBP"] <- "too old ?"
+eruption_summary$VEI[eruption_summary$Eruption == "Trident Mount Cerebus Dome"] <- "too old ?"
+eruption_summary$VEI[eruption_summary$Eruption == "Trident Northeast-Ridge Dacite"] <- "too old ?"
+eruption_summary$VEI[eruption_summary$Eruption == "Veniaminof 1983/6"] <- 3
+eruption_summary$VEI[eruption_summary$Eruption == "Vsevidof 1878"] <- 2
+
+```
+
+CHECK WITH SOMEONE WHO KNOWS
+
+
+
+```{r}
+# UPDATE 06/06/25
+# After checking with Mark
+
+
+# list of eruptions to delete
+eruptions_a_supprimer <- c(
+  "Pakushin cone 22000 yBP", # 7
+  "Aniakchak Black Nose Pumice", # 4
+  "Augustine Tephra I", # 3
+  "Aniakchak Vent Mountain Lava Flows", # 2
+  "Augustine Tephra C", # 2
+  "Aniakchak Half Cone Upper Pumice", # 1
+  "Augustine Tephra G", # 1
+  "Augustine Tephra H", # 1
+  "Hayes Tephra A", # 1 
+  "Trident 44000 yBP", # 1
+  "Trident 73000 yBP", # 1
+  "Trident Mount Cerebus Dome", # 1
+  "Trident Northeast-Ridge Dacite", # 1
+  "Chiginagak 2005/5"#, # 1
+  #"Makushin Lava Ramp", #lets delete those for now, effusive and not explosive volcano.       5
+ # "Makushin Koriga Point Flows", # same here.     3
+ # "Kanaga 1906/5" # vei 0 and it has negarive p2O5.      6
+  
+  
+)
+
+eruption_summary <- eruption_summary %>%
+  dplyr::filter(!Eruption %in% eruptions_a_supprimer)
+
+```
+
+
+
+how many samples now
+
+```{r}
+sum(eruption_summary$Number_of_Samples)
+```
+
+
+how many na ?
+
+```{r}
+colSums(is.na(eruption_summary))
+
+```
+
+
+```{r}
+#write.csv(eruption_summary, "/Users/annad/Documents/NZ Internship/eruption_summary_check.csv")
+```
+
+
+how spread out are the vei ?
+
+
+barplot
+
+```{r}
+
+colnames(eruption_summary)
+
+ggplot(data = eruption_summary %>% dplyr::filter(!is.na(VEI)), aes(x = as.factor(VEI))) +
+  geom_bar(fill = "skyblue", color = "black") +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5, size = 4) +
+  labs(title = "Number of eruption by VEI level",
+       x = "VEI", y = "Nb of eruptions") +
+  theme_minimal()
+
+
+
+```
+
+
+maybe dont keep vei 0 here ?? --> i deleted it --> i kept them to put them with vei 1 and 2
+
+
+lets filter eruption summary out of avo_with_confirmed_eruption
+
+```{r}
+
+avo_with_confirmed_eruption_and_vei <- avo_with_confirmed_eruption2 %>%
+  semi_join(eruption_summary, by = "Eruption") %>%
+  left_join(eruption_summary %>% dplyr::select(Eruption, VEI), by = "Eruption")
+
+#write.csv(avo_with_confirmed_eruption_and_vei, "/Users/annad/Documents/NZ Internship/avo_with_confirmed_eruption_and_vei_250625.csv")
+
+```
+
+
+03/07/25 : i finished to comment up until here 
+04/07/25 : i deleted the code after bc it was graphs and statistics, lets keep this rmd only for cleaning and filtering the data. 
+here i copy paste the code from an another rmd (previously called avo filtered.rmd, now called ...), and to create error, i will use the same code, same variable names.
+
+```{r}
+avo_filtered <- avo_with_confirmed_eruption_and_vei
+avo_filtered <- as.data.frame(avo_with_confirmed_eruption_and_vei)
+
+# and by doing this, we keep a version of the data before we do anything on it 
+```
+
+
+lets create a df where it summarize the data by eruption.
+
+```{r}
+oxydes <- c("SiO2", "TiO2", "Al2O3", "FeOT", "MnO", "MgO", "CaO", "Na2O", "K2O", "P2O5")
+
+
+# Résumé par éruption : moyenne des alr standardisées
+eruption_summary <- avo_filtered %>%
+  group_by(Eruption) %>%
+  summarise(
+    VEI = unique(VEI),  # on suppose 1 VEI par éruption
+    n_samples = n(),
+    across(
+      all_of(oxydes),
+      list(mean = ~mean(.x, na.rm = TRUE),
+           sd   = ~sd(.x, na.rm = TRUE))
+    ),
+    .groups = "drop"
+  )
+
+```
+
+
+I have 15 eruptions where i only have 1 sample. 
+
+
+update 26/06/25 : i will try to add samples for the eruptions with only one.
+
+
+
+### Akutan CFE / Akutan Tephra (1611yBP) 
++ 5 samples
+
+```{r}
+akutan_cfe_2 = read_xlsx("/Users/annad/Documents/NZ Internship/12867353/B35667_SuppTab1.xlsx", sheet = "Table DR1_WRchem", skip = 1)
+
+# df where i store all the right samples
+
+akutan_cfe_2_samples <- akutan_cfe_2 %>% 
+  dplyr::filter(`Unit name` == "CFE2")
+
+
+
+oxydes <- c("SiO2", "TiO2", "Al2O3", "FeO(t)", "MnO", "MgO", "CaO", "Na2O", "K2O", "P2O5")
+
+info_vars <- c("Sample No.", "Unit name", "Unit abbreviation", "Age (ka)", 
+               "Latitude", "Longitude", "Location description", "Sample Type", "Total.analytical")
+
+
+
+akutan_cfe_2_samples <- akutan_cfe_2_samples %>%
+  dplyr::select(all_of(c(info_vars, oxydes)))
+
+# lets rename the columns correctly and add the missing info
+akutan_cfe_2_samples <- akutan_cfe_2_samples %>% 
+  rename(FeOT = `FeO(t)`)
+
+akutan_cfe_2_samples <- akutan_cfe_2_samples %>% 
+  rename(SampleID = `Sample No.`)
+
+
+akutan_cfe_2_samples$Latitude[akutan_cfe_2_samples$SampleID %in% c("96PS09", "96PS16")] <- 54.12287
+akutan_cfe_2_samples$Longitude[akutan_cfe_2_samples$SampleID %in% c("96PS09", "96PS16")] <- -165.9942
+
+akutan_cfe_2_samples <- akutan_cfe_2_samples %>% 
+  rename(somme_oxydes = Total.analytical)
+
+# add the year of the eruption (roughly)
+akutan_cfe_2_samples <- akutan_cfe_2_samples %>% 
+  rename(`Eruption date` = `Age (ka)`)
+
+akutan_cfe_2_samples$`Eruption date` <- "1611 ybp"
+
+
+# add the volcano
+akutan_cfe_2_samples$Volcano <- NA
+akutan_cfe_2_samples$Volcano <- "Akutan"
+
+# add the eruption
+akutan_cfe_2_samples$Eruption <- "Akutan CFE/Akutan Tephra"
+
+# add the vei 
+akutan_cfe_2_samples$VEI <- 5
+
+avo_filtered$VEI <- as.numeric(avo_filtered$VEI)
+
+
+avo_filtered <- bind_rows(avo_filtered, akutan_cfe_2_samples) 
+
+```
+
+
+### Akutan 1978/9 (same paper)
++ 7 samples
+
+```{r}
+
+akutan_cfe_2_samples_1978 <- akutan_cfe_2 %>%
+  dplyr::filter(
+    str_detect(`Unit name`, "1978") | str_detect(`Unit abbreviation`, "1978")
+  )
+
+oxydes <- c("SiO2", "TiO2", "Al2O3", "FeO(t)", "MnO", "MgO", "CaO", "Na2O", "K2O", "P2O5")
+
+info_vars <- c("Sample No.", "Unit name", "Unit abbreviation", "Age (ka)", 
+               "Latitude", "Longitude", "Location description", "Sample Type", "Total.analytical")
+
+akutan_cfe_2_samples_1978 <- akutan_cfe_2_samples_1978 %>%
+  dplyr::select(all_of(c(info_vars, oxydes)))
+
+
+# lets rename the columns correctly and add the missing info
+akutan_cfe_2_samples_1978 <- akutan_cfe_2_samples_1978 %>% 
+  rename(FeOT = `FeO(t)`)
+
+akutan_cfe_2_samples_1978 <- akutan_cfe_2_samples_1978 %>% 
+  rename(SampleID = `Sample No.`)
+
+
+akutan_cfe_2_samples_1978$Latitude <- 54.12287
+akutan_cfe_2_samples_1978$Longitude <- -165.9942
+
+akutan_cfe_2_samples_1978 <- akutan_cfe_2_samples_1978 %>% 
+  rename(somme_oxydes = Total.analytical)
+
+# add the year of the eruption (roughly)
+akutan_cfe_2_samples_1978 <- akutan_cfe_2_samples_1978 %>% 
+  rename(`Eruption date` = `Age (ka)`)
+
+akutan_cfe_2_samples_1978$`Eruption date` <- "1978"
+
+
+
+# add the volcano
+akutan_cfe_2_samples_1978$Volcano <- NA
+akutan_cfe_2_samples_1978$Volcano <- "Akutan"
+
+# add the eruption
+akutan_cfe_2_samples_1978$Eruption <- "Akutan 1978/9"
+
+# add the vei
+akutan_cfe_2_samples_1978$VEI <- 2
+
+
+avo_filtered <- bind_rows(avo_filtered, akutan_cfe_2_samples_1978) 
+
+
+# here add the eruption date to the already existing samples
+
+avo_filtered$`Eruption date`[grepl("Akutan 1978/9", avo_filtered$Eruption)] <- "1978"
+
+```
+
+
+
+### Akutan 1911
+
+i need to start a free trial to access the pdf so maybe later
+
+
+### Aniakchak Half Cone Brown and Pink Pumice
++ 48 samples
+
+```{r}
+aniakchak_brown_pink_pumice = read_csv("/Users/annad/Documents/NZ Internship/pr126_Appendix-C/volcanoes_of_alaska/pr126/data/pr126-appendix_c_whole-rock_gx_data.csv", show_col_types = FALSE) 
+
+aniakchak_brown_pink_pumice_samples <- aniakchak_brown_pink_pumice %>% 
+  dplyr::filter(
+    eruptive_phase %in% c("Pink Pumice", "Brown Pumice", "pre-400 yr B.P. Half Cone tephra")
+  )
+
+oxydes <- c("SiO2", "TiO2", "Al2O3", "FeOT", "MnO", "MgO", "CaO", "Na2O", "K2O", "P2O5")
+
+columns_to_keep <- c("sample_id", "geologist", "eruptive_phase", "station_id", "lat_nad83", "long_nad83", "description", "total")
+
+aniakchak_brown_pink_pumice_samples <- aniakchak_brown_pink_pumice_samples %>%
+  dplyr::select(all_of(c(columns_to_keep, oxydes)))
+
+
+aniakchak_brown_pink_pumice_samples <- aniakchak_brown_pink_pumice_samples %>%
+  rename(SampleID = sample_id)
+
+aniakchak_brown_pink_pumice_samples <- aniakchak_brown_pink_pumice_samples %>%
+  rename(Latitude = lat_nad83)
+
+aniakchak_brown_pink_pumice_samples <- aniakchak_brown_pink_pumice_samples %>%
+  rename(Longitude = long_nad83)
+
+
+aniakchak_brown_pink_pumice_samples$Volcano <- "Aniakchak"
+aniakchak_brown_pink_pumice_samples$`Eruption date` <- "400 ybp"
+
+
+aniakchak_brown_pink_pumice_samples <- aniakchak_brown_pink_pumice_samples %>% 
+  rename(somme_oxydes = total)
+
+
+# add the eruption
+aniakchak_brown_pink_pumice_samples$Eruption <- "Aniakchak Half Cone Pink and Brown Pumice"
+
+# add the VEI
+aniakchak_brown_pink_pumice_samples$VEI <- 5
+
+
+avo_filtered <- bind_rows(avo_filtered, aniakchak_brown_pink_pumice_samples) 
+
+```
+
+
+### Bogoslof 1883/8
+
+lets add Merrill_1885_1, we already have the 2
++ 1 sample
+
+```{r}
+new_sample <- tibble(
+  `...1` = NA,  # ou un nouvel index
+  `UniqueID` = NA,
+  `SampleID` = "Merrill_1885_1",
+  `StationID` = "unnamed1",
+  `Latitude` = 53.9272,
+  `Longitude` = -168.0344,
+  `Collector` = "Stoney George M",
+  `Date Visited` = NA,  
+  `Volcano` = "Bogoslof",
+  `Possible Source Volcano` = "Bogoslof",
+  `Eruption` = "Bogoslof 1883/8",
+  `Location Description` = "Bogoslof Island",
+  `Sample Description` = "Inferred to be a ejected volcanic block. Light gray slightly purplish, fine grained and porous groundmass, in which small feldspars and dark brown and green hornblende like crystals are readily distinguishable by the naked eye. The texture is uniform, the brown hornblende being the more variable constituent, a single crystal nearly half an inch in diameter was observed. The rock is rough to the touch and somewhat friable. Iron ore and augite are present. Apatite occurs sparingly and magnetite is present in poorly defined crystals.",
+  `Comments` = NA,
+  `AT-NUM` = NA,
+  `Tephra Name` = NA,
+  `Material` = "Whole-rock",
+  `n` = NA,
+  `Total-majors` = 99.64,
+  `REF majors` = NA,
+  `SiO2` = 56.07,
+  `TiO2` = 1.24,
+  `Al2O3` = 19.06,
+  `FeOT` = 6.22, # calculated thanks to the formula with feo and fe2o3
+  `MnO` = 0.23,
+  `MgO` = 2.12,
+  `CaO` = 7.70,
+  `Na2O` = 4.52,
+  `K2O` = 1.24,
+  `P2O5` = 0.16,
+  `somme_oxydes` = 99.64, # true total is 98.56 but i used the total from the article bc they used ignition which is 0.99. idk if they used for merrill_1885_2 so just in case i will leave ignition
+  `VEI` = 3
+)
+
+
+avo_filtered <- bind_rows(avo_filtered, new_sample) # dont work yet --> works now ??
+
+```
+
+
+### Cone A 1986/11 let Mark or Mel check the samples
+
+### Edgecumbe Tephra set (includes Mount Edgecumbe Dacite (MEd) Tephra) --> its ok, its a vei 6
+
+### Great Sitkin 1974/2 --> only sample available for this eruption that i could find
+
+### Hayes Tephra Set H --> only sample available
+
+### Kanaga 1994/1 --> only sample available
+
+### Mt Churchill White River North Lobe --> only one sample here
+
+### Pavlof 1986/4 --> only one sample
+
+### Shishaldin 1824 --> only one sample
+
+### Sirius Point 1962/1 --> only one sample
+
+### Veniaminof 1983/6 --> only one sample
+
+### Vsevidof 1878 (not sure yet of the only sample i could find) 
+
+
+
+i need to add the eruption date here and then add it in avo_filtered 
+```{r you can delete it later}
+# add the eruption date
+avo_filtered <- avo_filtered %>%
+  mutate(
+    `Eruption date` = if_else(
+      is.na(`Eruption date`),                         # Si NA
+      str_extract(Eruption, "\\b\\d{4}"),             # Extraire une année (ex. 1986)
+      `Eruption date`                                 # Sinon, garder la valeur existante
+    )
+  )
+
+
+# add the eruption date for those eruptions without numbers in it
+
+avo_filtered$`Eruption date`[grepl("Akutan CFE/Akutan Tephra", avo_filtered$Eruption)] <- "1611 ybp"
+avo_filtered$`Eruption date`[grepl("Aniakchak CFE I", avo_filtered$Eruption)] <- "9500 ybp"
+avo_filtered$`Eruption date`[grepl("Aniakchak CFE II", avo_filtered$Eruption)] <- "3430 ybp"
+avo_filtered$`Eruption date`[grepl("Edgecumbe Tephra set (includes Mount Edgecumbe Dacite (MEd) Tephra)", avo_filtered$Eruption)] <- "11250 ybp"
+avo_filtered$`Eruption date`[grepl("Fisher Tuff/Funk Ash/CFE", avo_filtered$Eruption)] <- "9372 ybp"
+avo_filtered$`Eruption date`[grepl("Hayes Tephra Set H", avo_filtered$Eruption)] <- "3750 ybp"
+avo_filtered$`Eruption date`[grepl("Kaguyak CFE", avo_filtered$Eruption)] <- "5800 ybp"
+avo_filtered$`Eruption date`[grepl("Makushin Driftwood Pumice", avo_filtered$Eruption)] <- "8400 ybp" #  6400 BCE
+avo_filtered$`Eruption date`[grepl("Mt Churchill White River East Lobe", avo_filtered$Eruption)] <- "1900 ybp"
+avo_filtered$`Eruption date`[grepl("Mt Churchill White River North Lobe", avo_filtered$Eruption)] <- "1900 ybp"
+avo_filtered$`Eruption date`[grepl("Okmok CFE I", avo_filtered$Eruption)] <- "12000 ybp"
+avo_filtered$`Eruption date`[grepl("Okmok CFE II", avo_filtered$Eruption)] <- "2050 ybp"
+avo_filtered$`Eruption date`[grepl("Okmok Middle Scoria", avo_filtered$Eruption)] <- "2500 ybp" # >2050 yBP (before the eruption Okmok II)
+avo_filtered$`Eruption date`[grepl("Makushin Koriga Point Flows", avo_filtered$Eruption)] <- "45000 ybp" # 45000 yBP ± 11000 Years
+avo_filtered$`Eruption date`[grepl("Makushin Lava Ramp", avo_filtered$Eruption)] <- "54000 ybp"
+
+avo_filtered$`Eruption date`[grepl("ANI-14-1", avo_filtered$SampleID)] <- "400 ybp"
+
+avo_filtered$`Eruption date`[grepl("81ARJ075A", avo_filtered$SampleID)] <- "11250 ybp"
+
+new_eruption_summary_normal <- avo_filtered %>%
+  group_by(Eruption) %>%
+  summarise(
+    VEI = unique(VEI)[1],
+    `Eruption date` = unique(`Eruption date`),  # ici on suppose 1 date par éruption
+    n_samples = n(),
+    across(
+      all_of(oxydes),
+      list(mean = ~mean(.x, na.rm = TRUE),
+           sd   = ~sd(.x, na.rm = TRUE))
+    ),
+    .groups = "drop"
+  )
+
+
+
+```
+
+
+
+
+update 30/06/25
+
+can i know the type of volcano according to gvp ?
+
+```{r}
+gvp_holocene_list = read_csv("/Users/annad/Documents/NZ Internship/unique volcano + eruption/GVP_Volcano_List.csv", show_col_types = FALSE)
+```
+
+lets rename two volcanoes for it to match each others in the two bases
+churchill and pyre peak
+
+```{r}
+avo_filtered <- avo_filtered %>%
+  mutate(
+    Volcano = case_when(
+      Volcano == "Churchill, Mt" ~ "Churchill",
+      Volcano == "Pyre Peak" ~ "Seguam",
+      TRUE ~ Volcano
+    )
+  )
+
+```
+
+
+
+
+
+
+lets find the volcanoes of avo in gvp_holocene_list
+
+
+```{r}
+# 1. Extraire la liste des noms de volcans depuis avo_alr_scaled
+avo_volcano_names <- unique(avo_filtered$Volcano)
+
+# 2. Filtrer les volcans du GVP qui apparaissent dans la liste des volcans d'AVO
+gvp_avo_matches <- gvp_holocene_list %>%
+  dplyr::filter(`Volcano Name` %in% avo_volcano_names)
+
+# 3. Aperçu du résultat
+print(gvp_avo_matches)
+
+```
+
+# mt churchill is not in it bc of the spelling, it is spelled churchill in gvp but churchill, mt in avo
+# and pyre peak is not in gvp but is in avo --> i changed the name before
+
+
+
+
+
+```{r, eval=FALSE}
+library(dplyr)
+
+# 1. Liste des noms de volcans dans AVO
+avo_volcano_names <- unique(avo_filtered$Volcano)
+
+# 2. Table de correspondance manuelle AVO → GVP
+volcano_name_mapping <- tibble::tribble(
+  ~AVO_name,     ~GVP_name,
+  "Churchill",   "Churchill, Mt",
+  "Pyre Peak",   "Seguam"
+)
+
+# 3. Combine : noms présents directement ET ceux de la correspondance manuelle
+all_gvp_names_to_match <- union(avo_volcano_names, volcano_name_mapping$GVP_name)
+
+# 4. Filtrer gvp_holocene_list avec les noms combinés
+gvp_avo_matches <- gvp_holocene_list %>%
+  dplyr::filter(`Volcano Name` %in% all_gvp_names_to_match)
+
+# 5. Afficher le résultat
+print(gvp_avo_matches)
+
+```
+
+
+
+
+
+
+lets add the column showing the type of volcano in avo_filtered
+
+```{r where i add the volcano type and more}
+avo_filtered <- avo_filtered %>%
+  left_join(
+    gvp_avo_matches %>%
+      dplyr::select(
+        `Volcano Name`,
+        `Volcano Number`,
+        `Country`,
+        `Volcanic Region Group`,
+        `Volcanic Region`,
+        `Volcano Landform`,
+        `Primary Volcano Type`,
+        `Dominant Rock Type`
+      ),
+    by = c("Volcano" = "Volcano Name")
+  )
+
+
+```
+
+
+
+
+
+
+```{r, eval=FALSE}
+
+# lets add mt churchill
+
+library(dplyr)
+
+avo_filtered <- avo_filtered %>%
+  mutate(
+    `Volcano Number`        = if_else(Volcano == "Churchill, Mt", 315030, `Volcano Number`),
+    `Country`               = if_else(Volcano == "Churchill, Mt", "United States", Country),
+    `Volcanic Region Group` = if_else(Volcano == "Churchill, Mt", "North America Volcanic Regions", `Volcanic Region Group`),
+    `Volcanic Region`       = if_else(Volcano == "Churchill, Mt", "Wrangell Volcanic Arcs", `Volcanic Region`),
+    `Volcano Landform`      = if_else(Volcano == "Churchill, Mt", "Composite", `Volcano Landform`),
+    `Primary Volcano Type`  = if_else(Volcano == "Churchill, Mt", "Stratovolcano", `Primary Volcano Type`),
+    `Dominant Rock Type`    = if_else(Volcano == "Churchill, Mt", "Dacite", `Dominant Rock Type`)
+)
+
+
+
+
+```
+
+
+drop Ukinrek Maars 1977/3 just to be sure
+
+```{r}
+avo_filtered <- avo_filtered %>% 
+  dplyr::filter(!Eruption == "Ukinrek Maars 1977/3")
+```
+
+
+
+
+
+
+download avo_filtered
+
+```{r}
+#write_csv(avo_filtered, "/Users/annad/Documents/NZ Internship/avo_filtered.csv")
+```
+
+
+
