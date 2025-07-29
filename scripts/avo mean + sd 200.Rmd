@@ -1,0 +1,1384 @@
+---
+title: "avo mean +sd 200"
+output: html_document
+date: "2025-07-15"
+---
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(recipes)
+library(caret)
+library(stats)
+library(car)
+library(broom)
+library(MASS)
+library(janitor)
+library(dplyr)
+library(readr)
+library(purrr)
+library(dplyr)
+library(naivebayes)
+library(ranger)
+library(ordinalForest)
+library(e1071)
+```
+
+
+```{r}
+
+avo_filtered <- read_csv("/Users/annad/Documents/NZ Internship/avo_filtered.csv", show_col_types = FALSE)
+
+
+```
+
+
+```{r}
+vei_group_map <- c("0_1" = 1, "2" = 2, "3" = 3, "4" = 4, "5" = 5, "6" = 6)
+
+avo_filtered <- avo_filtered %>%
+  mutate(
+    VEI_group = case_when(
+      VEI %in% c(0, 1) ~ "0_1",
+      TRUE ~ as.character(VEI)
+    ),
+    VEI_factor = factor(VEI_group, levels = names(vei_group_map), ordered = TRUE),
+    VEI_numeric = vei_group_map[VEI_group]
+  )
+
+```
+
+
+
+
+how many eruption by vei
+
+```{r}
+
+# 1. Résumer le nombre d’éruptions par VEI
+vei_counts <- avo_filtered %>%
+  dplyr::filter(!is.na(Eruption), !is.na(VEI)) %>%
+  dplyr::distinct(Eruption, VEI) %>%   # on compte une seule fois chaque éruption
+  count(VEI, name = "n_eruptions")
+
+# 2. Histogramme
+ggplot(vei_counts, aes(x = as.factor(VEI), y = n_eruptions)) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title = "Number of eruptions by VEI",
+    x = "VEI",
+    y = "Number of eruptions"
+  ) +
+  theme_minimal()
+
+
+## with the mixed vei class
+
+# 1. Résumer le nombre d’éruptions par VEI
+vei_counts2 <- avo_filtered %>%
+  dplyr::filter(!is.na(Eruption), !is.na(VEI_group)) %>%
+  dplyr::distinct(Eruption, VEI_group) %>%   # on compte une seule fois chaque éruption
+  count(VEI_group, name = "n_eruptions")
+
+# 2. Histogramme
+ggplot(vei_counts2, aes(x = as.factor(VEI_group), y = n_eruptions)) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title = "Number of eruptions by VEI_group",
+    x = "VEI_group",
+    y = "Number of eruptions"
+  ) +
+  theme_minimal()
+
+
+```
+
+
+i want to create a df like avo_filtered but with only vei_group, like we drop the vei
+update : we keep the vei, but we rename it like "old vei" and create after that a new column named "new vei" or just "vei" where we replace the vei 0 and 1 by the value 2 --> i know it changes the data, but it aligns with what i wanted to do with the group 0_1_2, where i wanted it to give it the value 2 (see explanation below)
+
+```{r}
+avo_filtered_2 <- avo_filtered
+avo_filtered_2 <- as.data.frame(avo_filtered_2)
+  
+```
+
+lets add a numeric value to the 0_1 vei class 
+
+```{r, eval=FALSE}
+#vei_group_map <- c("0_1_2" = 2, "3" = 3, "4" = 4, "5" = 5, "6" = 6)
+
+#avo_filtered_2$VEI_numeric <- vei_group_map[avo_filtered_2$VEI_group]
+
+#colnames(avo_filtered_2)
+
+#why it doesnt wooork ????????
+```
+
+lets rename the column vei and add a new one
+
+```{r}
+avo_filtered_2 <- avo_filtered_2 %>%
+  rename(Old_Vei = VEI)
+
+avo_filtered_2$New_Vei <- avo_filtered_2$Old_Vei
+
+# replace 0 and 1 by 2
+
+avo_filtered_2$New_Vei[avo_filtered_2$New_Vei %in% c(0, 1)] <- 1
+  
+```
+
+now we have to work with "New Vei".
+
+
+
+
+Let's do the alr transformation, using SIO2 as our reference oxide. 
+
+```{r}
+# oxide list
+oxydes <- c("SiO2", "TiO2", "Al2O3", "FeOT", "MnO", "MgO", "CaO", "Na2O", "K2O", "P2O5")
+
+# oxide reference 
+ref_oxyde <- "SiO2"
+
+# alr and drop the non alr columns
+avo_alr <- avo_filtered_2 %>%
+  # Vérifie que la référence est non manquante et positive
+  dplyr::filter(!is.na(.data[[ref_oxyde]]), .data[[ref_oxyde]] > 0) %>%
+  mutate(across(
+    all_of(setdiff(oxydes, ref_oxyde)),
+    ~ log(.x / .data[[ref_oxyde]]),
+    .names = "alr_{.col}"
+  )) %>%
+  # Supprime les colonnes d'oxydes d'origine
+  dplyr::select(-all_of(oxydes))
+
+
+```
+
+
+avo_alr is the df containing the alr oxides.
+
+# CUBE ROOT SD
+## === STEP 1: Eruption-level summary ===
+```{r}
+
+
+# 1. Keep only eruptions with VEI and needed variables + volcano names associated to the eruptions
+
+eruption_summary_oxides_vei_volcano <- avo_alr %>%
+  dplyr::filter(!is.na(New_Vei)) %>%
+  group_by(Eruption) %>%
+  summarise(
+    New_Vei = first(New_Vei),
+    n_samples = n(),
+    Volcano = first(Volcano),
+    across(matches("^alr_"),
+           list(mean = ~mean(.x, na.rm = TRUE),
+                sd   = ~sd(.x, na.rm = TRUE)),
+           .names = "{.col}_{.fn}"),
+    .groups = "drop"
+  )
+# 2. Apply cube root to SD columns (second moment)
+eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
+  mutate(across(ends_with("_sd"), ~ (.x)^(1/3)))
+
+
+# 3. create mean+sd column
+
+eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
+  mutate(
+    across(
+      ends_with("_mean"),
+      ~ .x + get(sub("_mean$", "_sd", cur_column())),
+      .names = "{.col}_plus_sd"
+    )
+  )
+
+
+
+```
+
+
+## === STEP 1.5: delete rows where there is only one sample ===
+
+```{r}
+
+eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
+ dplyr::filter(n_samples != 1)
+```
+
+
+we standardize the oxides.
+
+```{r, eval=FALSE}
+# 1. Identifier les colonnes ALR
+alr_cols <- grep("^alr_", colnames(avo_alr), value = TRUE)
+
+# 2. Standardiser les colonnes ALR et supprimer les originales
+avo_alr_scaled <- avo_alr %>%
+  mutate(across(
+    all_of(alr_cols),
+    ~ scale(.)[, 1],
+    .names = "{.col}_z" # new name to know its the standardized values
+  )) %>%
+  # 3. Supprimer les colonnes ALR brutes
+  dplyr::select(-all_of(alr_cols))
+
+
+```
+
+```{r}
+eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
+  mutate(across(
+    matches("(_mean$|_sd$|_mean_plus_sd$)"),
+    ~ scale(.)[, 1],
+    .names = "{.col}_scaled"
+  ))
+
+```
+
+
+
+
+
+
+
+
+
+## === STEP 2: Stratified splitting by eruption VEI ===
+```{r, eval=FALSE}
+
+all_splits_summary <- list() # i create a list to store all the splits that i will later decide which goes to train or test
+
+for (rep in 1:rep_count) {
+  
+  # Assign each eruption to one of the 3 folds, stratified by VEI
+  eruptions_split <- eruption_summary_oxides_vei_volcano %>% 
+    group_by(New_Vei) %>%                                    # eruptions with the same VEI are split evenly across folds.
+    mutate(k = sample(rep(k_vals, length.out = n()))) %>%    # shuffles the fold assignments randomly.
+    ungroup()
+  
+  folds_to_run <- if (do_all_folds) k_vals else k_test 
+  # If do_all_folds = TRUE, perform cross-validation: test each fold in turn.
+  # If do_all_folds = FALSE, use the fold number k_test for testing and the rest for training.
+  
+  for (k_sel in folds_to_run) {  # test fold 1, 2, or 3 — or all of them if cross-validation is active.
+    
+    test_set <- eruptions_split %>%   # extract only the eruptions assigned to fold k_sel (e.g. fold 1).
+      dplyr::filter(k == k_sel) %>%
+      dplyr::select(-k) # Then remove the k column (not needed for modeling).
+    
+    train_set <- eruptions_split %>%  # take all other eruption (not in k_fold) to use in the train set
+      dplyr::filter(k != k_sel) %>%
+      dplyr::select(-k)
+    
+    all_splits_summary[[length(all_splits_summary) + 1]] <- list(
+      rep = rep,
+      fold = k_sel,
+      train = train_set,
+      test  = test_set
+    )
+  }
+}
+
+#it stores this split into the list all_splits_summary as a list containing:
+# - the rep number (e.g., 1)
+# - the fold number used as test
+# - the train set
+# - the test set
+
+
+
+```
+
+
+
+## === STEP 3: Prepare all 200 train/test splits ===
+```{r}
+all_splits_summary <- list()
+
+set.seed(42)
+rep_count <- 50
+k_vals <- 1:3
+do_all_folds <- TRUE
+
+for (rep in 1:rep_count) {
+  
+  # 1. Répartition des éruptions par VEI
+  eruptions_split <- eruption_summary_oxides_vei_volcano %>% 
+    group_by(New_Vei) %>%
+    mutate(k = sample(rep(k_vals, length.out = n()))) %>%
+    ungroup()
+  
+  folds_to_run <- if (do_all_folds) k_vals else k_test
+
+  for (k_sel in folds_to_run) {
+    
+    test_set <- eruptions_split %>%
+      dplyr::filter(k == k_sel) %>%
+      dplyr::select(-k)
+    
+    train_set <- eruptions_split %>%
+      dplyr::filter(k != k_sel) %>%
+      dplyr::select(-k)
+    
+    all_splits_summary[[length(all_splits_summary) + 1]] <- list(
+      rep = rep,
+      fold = k_sel,
+      train = train_set,
+      test  = test_set
+    )
+  }
+}
+
+```
+
+
+
+
+
+
+FUNCTIONS TO CALCULATE COST FUNCTIONS AND WEIGHTED ACCURACY
+
+
+```{r}
+# function to calculate probability cost
+compute_costs <- function(true_y, class_labels, prob_matrix) {
+  n <- length(true_y)
+  D <- length(class_labels)
+  C_abs <- C_sq <- C_asym <- 0
+
+  for (i in 1:n) {
+    for (j in 1:D) {
+      y_i <- true_y[i]
+      y_j <- class_labels[j]
+      p_ij <- prob_matrix[i, j]
+      diff <- y_i - y_j
+
+      C_abs <- C_abs + abs(diff) * p_ij
+      C_sq  <- C_sq  + (diff^2) * p_ij
+      C_asym <- C_asym + ifelse(
+        diff <= 0,
+        (diff^2) * p_ij,
+        exp(diff) * p_ij
+      )
+    }
+  }
+
+  list(
+    C_absolute = C_abs,
+    C_squared = C_sq,
+    C_asymmetric = C_asym
+  )
+}
+
+
+# function for weighted accuracy 
+compute_weighted_accuracy <- function(pred, true) {
+  class_levels <- levels(true)
+  D <- length(class_levels)
+  weights <- rep(1/D, D)  # égal pour chaque classe
+  accs <- sapply(class_levels, function(cl) {
+    in_class <- which(true == cl)
+    if (length(in_class) == 0) return(0)
+    mean(as.character(pred[in_class]) == as.character(true[in_class]))
+
+  })
+  sum(weights * accs)
+}
+
+```
+
+
+
+
+```{r X_mean_sd_cols}
+# only take the columns ending in "mean"
+X_mean_sd_cols <- grep("_mean_plus_sd$", names(train), value = TRUE)
+
+```
+
+
+lda
+
+```{r}
+
+######### you can delete this if you only do one split and one fold ########
+
+results_lda <- list()
+
+for (split in all_splits_summary) {
+  train <- split$train
+  test  <- split$test
+
+  
+##############  
+  
+  # Build the LDA formula using all selected features
+  lda_formula <- as.formula(paste("New_Vei ~", paste(X_mean_sd_cols, collapse = " + ")))
+
+  # Train the LDA model on the training set
+  lda_model <- lda(lda_formula, data = train)
+
+  # Predict on the test set
+  lda_pred <- predict(lda_model, newdata = test)
+  lda_pred_class <- lda_pred$class
+  lda_pred_probs <- lda_pred$posterior
+
+  # Get true class labels from test set
+  true_y_lda <- test$New_Vei
+  true_y_lda <- as.numeric(as.character(true_y_lda))
+
+  # Extract the class labels from posterior probability matrix
+  class_labels_lda <- as.numeric(colnames(lda_pred_probs))
+
+  # Compute cost metrics
+  costs_lda <- compute_costs(true_y_lda, class_labels_lda, lda_pred_probs)
+
+  # Weighted accuracy
+  lda_pred_class <- factor(lda_pred_class, levels = sort(unique(true_y_lda)))
+  true_y_lda_factor <- factor(true_y_lda, levels = sort(unique(true_y_lda)))
+  weighted_acc_lda <- compute_weighted_accuracy(lda_pred_class, true_y_lda_factor)
+
+
+  
+  # Store results
+  results_lda[[length(results_lda) + 1]] <- data.frame(
+    Rep = split$rep,
+    Fold = split$fold,
+    C_absolute = costs_lda$C_absolute,
+    C_squared = costs_lda$C_squared,
+    C_asymmetric = costs_lda$C_asymmetric,
+    Weighted_Accuracy = weighted_acc_lda
+  )
+}
+
+# Combine into single data.frame
+results_lda_df <- bind_rows(results_lda)
+print(results_lda_df)
+
+mean(results_lda_df$Weighted_Accuracy) #0.4130492
+
+```
+
+
+
+
+
+
+
+
+## Naive Bayes
+
+```{r}
+
+## to delete if using only one split and fold
+
+results_nb <- list()  # liste pour stocker tous les résultats
+
+for (split in all_splits_summary) {
+  train <- split$train
+  test  <- split$test
+  
+  train$New_Vei <- as.factor(train$New_Vei)
+  test$New_Vei  <- as.factor(test$New_Vei)
+  
+################  
+
+# Build the Naive Bayes formula
+nb_formula <- as.formula(paste("New_Vei ~", paste(X_mean_sd_cols, collapse = " + ")))
+
+# Train the Naive Bayes model
+nb_model <- naive_bayes(nb_formula, data = train)
+
+# Predict class labels on test set
+nb_pred_class <- predict(nb_model, newdata = test)
+
+# Predict class probabilities on test set
+nb_pred_probs <- predict(nb_model, newdata = test, type = "prob")
+
+# Convert true labels to numeric (important if VEI is a factor)
+true_y_nb <- as.numeric(as.character(test$New_Vei))
+
+# Extract predicted class labels from column names
+class_labels_nb <- as.numeric(colnames(nb_pred_probs))
+
+# Compute cost metrics
+costs_nb <- compute_costs(true_y_nb, class_labels_nb, nb_pred_probs)
+
+# Compute weighted accuracy
+weighted_acc_nb <- compute_weighted_accuracy(nb_pred_class, test$New_Vei)
+
+
+# Store results for this split
+  results_nb[[length(results_nb) + 1]] <- data.frame(
+    Rep = split$rep,
+    Fold = split$fold,
+    C_absolute = costs_nb$C_absolute,
+    C_squared = costs_nb$C_squared,
+    C_asymmetric = costs_nb$C_asymmetric,
+    Weighted_Accuracy = weighted_acc_nb
+  )
+}
+
+# Fusionner tous les résultats en un seul data.frame
+results_nb_df <- bind_rows(results_nb)
+
+# print
+print(results_nb_df)
+
+mean(results_nb_df$Weighted_Accuracy) # 0.4174349
+
+
+```
+
+RF
+
+```{r}
+## to delete if using only one split and fold
+
+results_rf <- list()  # liste pour stocker tous les résultats
+
+for (split in all_splits_summary) {
+  train <- split$train
+  test  <- split$test
+  
+  train$New_Vei <- as.factor(train$New_Vei)
+  test$New_Vei  <- as.factor(test$New_Vei)
+
+
+# 1. Build formula using previously defined X_mean_cols
+rf_formula <- as.formula(paste("New_Vei ~", paste(X_mean_sd_cols, collapse = " + ")))
+
+# 2. Train the Random Forest model with probability prediction
+rf_model <- ranger(
+  formula = rf_formula,
+  data = train,
+  probability = TRUE
+)
+
+# 3. Predict probabilities on the test set
+rf_pred <- predict(rf_model, data = test)
+probs_rf <- rf_pred$predictions  # probability matrix: n rows x d class columns
+
+# 4. True class labels and class names from probability matrix
+true_y_rf <- as.numeric(as.character(test$New_Vei))  # ensure numeric true values
+true_y_rf_factor <- factor(true_y_rf, levels = sort(unique(true_y_rf)))
+class_labels_rf <- as.numeric(colnames(probs_rf))    # extract numeric class labels
+
+# 5. Compute probabilistic cost metrics
+costs_rf <- compute_costs(true_y_rf, class_labels_rf, probs_rf)
+
+# 6. Get predicted classes (argmax of probabilities)
+pred_classes_rf <- as.numeric(colnames(probs_rf)[max.col(probs_rf)])
+
+pred_classes_rf <- factor(pred_classes_rf, levels = sort(unique(true_y_rf)))
+
+# 7. Compute weighted accuracy
+weighted_acc_rf <- compute_weighted_accuracy(pred_classes_rf, true_y_rf_factor)
+
+# 8. Store results
+#results_rf <- data.frame(
+# Rep = split$rep,
+ # Fold = split$fold,
+#  C_absolute = costs_rf$C_absolute,
+#  C_squared = costs_rf$C_squared,
+#  C_asymmetric = costs_rf$C_asymmetric,
+#  Weighted_Accuracy = weighted_acc_rf
+#)
+
+# Store results for this split
+  results_rf[[length(results_rf) + 1]] <- data.frame(
+    Rep = split$rep,
+    Fold = split$fold,
+    C_absolute = costs_rf$C_absolute,
+    C_squared = costs_rf$C_squared,
+    C_asymmetric = costs_rf$C_asymmetric,
+    Weighted_Accuracy = weighted_acc_rf
+  )
+}
+
+# Fusionner tous les résultats en un seul data.frame
+results_rf_df <- bind_rows(results_rf)
+
+# print
+print(results_rf_df)
+
+mean(results_rf_df$Weighted_Accuracy) #0.4553746
+
+
+```
+
+
+
+SVM
+
+```{r}
+## to delete if using only one split and fold
+
+results_svm <- list()  # liste pour stocker tous les résultats
+
+for (split in all_splits_summary) {
+  train <- split$train
+  test  <- split$test
+  
+  train$New_Vei <- as.factor(train$New_Vei)
+  test$New_Vei  <- as.factor(test$New_Vei)
+
+# 1. Build the formula using already defined X_mean_cols
+svm_formula <- as.formula(paste("New_Vei ~", paste(X_mean_sd_cols, collapse = " + ")))
+
+# 2. Train the SVM model with probability output
+svm_model <- svm(
+  formula = svm_formula,
+  data = train,
+  probability = TRUE
+)
+
+# 3. Predict with probabilities on the test set
+svm_pred <- predict(svm_model, newdata = test, probability = TRUE)
+
+# 4. Extract the class probability matrix
+probs_svm <- attr(svm_pred, "probabilities")  # columns are class labels
+
+# 5. Ensure true labels and class labels are numeric
+true_y_svm <- as.numeric(as.character(test$New_Vei))              # true labels
+class_labels_svm <- as.numeric(colnames(probs_svm))               # predicted class labels
+
+# 6. Compute probabilistic cost metrics
+costs_svm <- compute_costs(true_y_svm, class_labels_svm, probs_svm)
+
+# 7. Get predicted classes (argmax of probability)
+pred_classes_svm <- as.numeric(colnames(probs_svm)[max.col(probs_svm)])
+
+# 8. Convert to factors for weighted accuracy
+pred_classes_svm <- factor(pred_classes_svm, levels = sort(unique(true_y_svm)))
+true_y_svm_factor <- factor(true_y_svm, levels = sort(unique(true_y_svm)))
+
+# 9. Compute weighted accuracy
+weighted_acc_svm <- compute_weighted_accuracy(pred_classes_svm, true_y_svm_factor)
+
+# 10. Store the results
+#results_svm <- data.frame(
+#  Rep = split$rep,
+#  Fold = split$fold,
+ # C_absolute = costs_svm$C_absolute,
+ # C_squared = costs_svm$C_squared,
+ # C_asymmetric = costs_svm$C_asymmetric,
+ # Weighted_Accuracy = weighted_acc_svm
+#)
+
+
+
+# Store results for this split
+  results_svm[[length(results_svm) + 1]] <- data.frame(
+    Rep = split$rep,
+    Fold = split$fold,
+    C_absolute = costs_svm$C_absolute,
+    C_squared = costs_svm$C_squared,
+    C_asymmetric = costs_svm$C_asymmetric,
+    Weighted_Accuracy = weighted_acc_svm
+  )
+}
+
+# Fusionner tous les résultats en un seul data.frame
+results_svm_df <- bind_rows(results_svm)
+
+# print
+print(results_svm_df)
+
+mean(results_svm_df$Weighted_Accuracy) #0.3348889
+
+```
+
+
+# APPROACH 2
+
+vei needs to be ordered
+
+
+ORF
+
+```{r}
+results_orf <- list()  # List to store all ORF results
+
+for (split in all_splits_summary) {
+  train <- split$train
+  test  <- split$test
+
+  # 1. Prepare training and testing sets
+  train_factor <- as.data.frame(train)
+  test_factor  <- as.data.frame(test)
+
+  # Make sure the target is an ordered factor
+  train_factor$New_Vei <- factor(train_factor$New_Vei, ordered = TRUE)
+  test_factor$New_Vei  <- factor(test_factor$New_Vei, ordered = TRUE, levels = levels(train_factor$New_Vei))
+
+  # Keep only response and predictors
+  train_orf <- train_factor[, c("New_Vei", X_mean_sd_cols)]
+  test_orf  <- test_factor[, c("New_Vei", X_mean_sd_cols)]
+
+  # 2. Train the Ordinal Random Forest model
+  orf_model <- ordfor(
+    depvar = "New_Vei",
+    data = train_orf,
+    nsets = 1000,
+    ntreeperdiv = 100,
+    ntreefinal = 500,
+    perffunction = "probability"
+  )
+
+  # 3. Predict class probabilities on the test set
+  orf_pred <- predict(orf_model, newdata = test_orf, what = "prob")
+  probs_orf <- orf_pred$classprobs
+
+  # 4. Ensure column names match class labels
+  colnames(probs_orf) <- levels(train_orf$New_Vei)
+
+  # 5. Convert true labels and class labels to numeric
+  true_y_orf <- as.numeric(as.character(test_orf$New_Vei))
+  class_labels_orf <- as.numeric(colnames(probs_orf))
+
+  # 6. Compute probabilistic costs
+  costs_orf <- compute_costs(true_y_orf, class_labels_orf, probs_orf)
+
+  # 7. Predicted class = one with highest probability
+  pred_classes_orf <- as.numeric(colnames(probs_orf)[max.col(probs_orf)])
+
+  # 8. Convert to factors for weighted accuracy
+  pred_classes_orf <- factor(pred_classes_orf, levels = sort(unique(true_y_orf)))
+  true_y_factor_orf <- factor(true_y_orf, levels = sort(unique(true_y_orf)))
+
+  # 9. Compute weighted accuracy
+  weighted_acc_orf <- compute_weighted_accuracy(pred_classes_orf, true_y_factor_orf)
+
+  # 10. Store results for this split
+  results_orf[[length(results_orf) + 1]] <- data.frame(
+    Rep = split$rep,
+    Fold = split$fold,
+    C_absolute = costs_orf$C_absolute,
+    C_squared = costs_orf$C_squared,
+    C_asymmetric = costs_orf$C_asymmetric,
+    Weighted_Accuracy = weighted_acc_orf
+  )
+}
+
+# 11. Combine all results into one data.frame
+results_orf_df <- bind_rows(results_orf)
+
+# 12. Print
+#print(results_orf_df) it takes too long to show idk why
+
+
+mean(results_orf_df$Weighted_Accuracy) # 0.4436281
+
+
+```
+
+
+
+POLR
+
+```{r}
+## to delete if using only one split and fold
+
+results_polr <- list()  # liste pour stocker tous les résultats
+
+for (split in all_splits_summary) {
+  train <- split$train
+  test  <- split$test
+  
+  train$New_Vei <- as.factor(train$New_Vei)
+  test$New_Vei  <- as.factor(test$New_Vei)
+  
+  if (length(unique(train$New_Vei)) < 3 || any(table(train$New_Vei) < 3)) next # if theres less than 3 classes, skip the split
+
+  
+# 1. Build formula using previously defined X_mean_cols
+polr_formula <- as.formula(paste("New_Vei ~", paste(X_mean_sd_cols, collapse = " + ")))
+
+# 2. Ensure New_Vei is an ordered factor
+train$New_Vei <- factor(train$New_Vei, ordered = TRUE)
+test$New_Vei  <- factor(test$New_Vei, ordered = TRUE, levels = levels(train$New_Vei))
+
+# 3. Train the POLR model
+polr_model <- polr(polr_formula, data = train)
+
+# 4. Predict class probabilities on test set
+probs_polr <- predict(polr_model, newdata = test, type = "probs")  # rows = obs, cols = class probs
+
+# 5. Convert true labels and class labels to numeric
+true_y_polr <- as.numeric(as.character(test$New_Vei))                  # true labels
+class_labels_polr <- as.numeric(colnames(probs_polr))                 # predicted class labels
+
+# 6. Compute probabilistic cost metrics
+costs_polr <- compute_costs(true_y_polr, class_labels_polr, probs_polr)
+
+# 7. Get predicted classes (argmax of probabilities)
+pred_classes_polr <- as.numeric(colnames(probs_polr)[max.col(probs_polr)])
+
+# 8. Convert to factors for weighted accuracy
+pred_classes_polr <- factor(pred_classes_polr, levels = sort(unique(true_y_polr)))
+true_y_factor_polr <- factor(true_y_polr, levels = sort(unique(true_y_polr)))
+
+# 9. Compute weighted accuracy
+weighted_acc_polr <- compute_weighted_accuracy(pred_classes_polr, true_y_factor_polr)
+
+
+# Store results for this split
+  results_polr[[length(results_polr) + 1]] <- data.frame(
+    Rep = split$rep,
+    Fold = split$fold,
+    C_absolute = costs_polr$C_absolute,
+    C_squared = costs_polr$C_squared,
+    C_asymmetric = costs_polr$C_asymmetric,
+    Weighted_Accuracy = weighted_acc_polr
+  )
+}
+
+# Fusionner tous les résultats en un seul data.frame
+results_polr_df <- bind_rows(results_polr)
+
+# print
+print(results_polr_df)
+
+mean(results_polr_df$Weighted_Accuracy) # 0.3826531
+
+```
+
+
+
+
+
+```{r}
+# Liste contenant les résultats par modèle
+results_list <- list(
+  lda = results_lda_df,
+  nb = results_nb_df,
+  rf = results_rf_df,
+  orf = results_orf_df,
+  svm = results_svm_df,
+ polr = results_polr_df
+)
+
+# Moyenne des colonnes numériques pour chaque modèle
+results_mean_sd <- lapply(results_list, function(df) {
+  num_cols <- sapply(df, is.numeric) # only apply to the numeric columns
+  colMeans(df[, num_cols], na.rm = TRUE)
+})  
+
+# Affiche le résumé
+print(results_mean_sd)
+
+```
+
+
+```{r}
+# Supprimer Rep et Fold et prendre la moyenne des colonnes numériques
+results_mean_sd_df <- lapply(results_list, function(df) {
+  df_num <- df[, !(names(df) %in% c("Rep", "Fold"))]
+  colMeans(df_num, na.rm = TRUE)
+}) %>%
+  do.call(rbind, .) %>%
+  as.data.frame()
+
+# Ajouter le nom des modèles comme colonne
+results_mean_sd_df$model <- rownames(results_mean_sd_df)
+rownames(results_mean_sd_df) <- NULL
+
+# Réordonner les colonnes (optionnel)
+results_mean_sd_df <- results_mean_sd_df[, c("model", "C_absolute", "C_squared", "C_asymmetric", "Weighted_Accuracy")]
+
+# Afficher le tableau
+print(results_mean_sd_df)
+
+```
+
+```{r}
+# 1. Filtrer les données avec New_Vei connu
+df_true <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:6) %>%
+  dplyr::select(Eruption, New_Vei, all_of(X_mean_sd_cols)) %>%
+  mutate(Expected_VEI = New_Vei)  # pour clarté
+
+# 2. Supprimer les NA sur les colonnes explicatives
+df_true <- df_true[complete.cases(df_true[, X_mean_sd_cols]), ]
+
+# 3. Prédire avec Naive Bayes entraîné sur AVO
+X_nb <- df_true[, X_mean_sd_cols]
+pred_nb <- predict(nb_model, newdata = X_nb)
+
+# 4. Créer le data.frame résultat
+df_nb_pred <- df_true %>%
+  dplyr::select(Eruption, Expected_VEI) %>%
+  mutate(
+    Predicted_VEI = pred_nb,
+    Model = "Naive Bayes"
+  )
+
+pred_rf <- predict(rf_model, data = X_nb)  # Même X car même base
+ # probability matrix: n rows x d class columns
+pred_vei_rf <- as.data.frame(pred_rf[["predictions"]])
+pred_vei_rf$pred_vei <- names(pred_vei_rf)[max.col(pred_vei_rf)]
+
+
+
+df_rf_pred <- df_true %>%
+  dplyr::select(Eruption, Expected_VEI) %>%
+  mutate(
+    Predicted_VEI = pred_vei_rf$pred_vei,
+    Model = "Random Forest"
+  )
+
+
+df_all_preds <- bind_rows(df_nb_pred, df_rf_pred)
+
+
+vei_levels <- as.character(0:7)
+
+df_all_preds$Expected_VEI <- factor(df_all_preds$Expected_VEI, levels = vei_levels, ordered = TRUE)
+df_all_preds$Predicted_VEI <- factor(df_all_preds$Predicted_VEI, levels = vei_levels, ordered = TRUE)
+
+ggplot(df_all_preds, aes(x = Expected_VEI, y = Predicted_VEI, color = Model)) +
+  geom_jitter(width = 0.2, height = 0.2, size = 3.5, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  theme_minimal() +
+  labs(
+    title = "Expected vs Predicted VEI (AVO)",
+    x = "Expected VEI",
+    y = "Predicted VEI"
+  ) +
+  scale_color_manual(values = c("Naive Bayes" = "steelblue", "Random Forest" = "darkorange")) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_discrete(drop = FALSE)
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+rocks_all_info_vei_7 = read_csv("/Users/annad/Documents/NZ Internship/rocks_all_info_vei_7_160725.csv")
+```
+
+# add a vei column 
+```{r}
+
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>% 
+  mutate(VEI = 7)
+```
+
+
+i want to use the vei 7 eruptions as test ??
+
+if a VEI 7 eruption happens, could the model recognize how extreme it is?
+VEI 7s are rare, so i want to evaluate performance on unseen extreme cases
+
+how to join the two databases together 
+
+
+```{r}
+# Clé de correspondance
+library(dplyr)
+
+# 1. Table de correspondance entre avo_filtered (nom = key) et rocks_all_info (valeur = value)
+
+# left = avo       right = vei 7
+col_mapping <- c(
+  "Volcano"       = "Volcano Name",
+  "UniqueID"      = "UNIQUE_ID",
+  "SampleID"      = "SAMPLE NAME",
+  "Material"      = "TYPE OF MATERIAL",
+  "somme_oxydes"  = "Sum Oxides",
+  "Latitude"      = "LATITUDE (MIN.)",
+  "Longitude"     = "LONGITUDE (MIN.)",
+  "SiO2"          = "SIO2(WT%)",
+  "TiO2"          = "TIO2(WT%)",
+  "Al2O3"         = "AL2O3(WT%)",
+  "FeOT"          = "sum_fe",
+  "MnO"           = "MNO(WT%)",
+  "MgO"           = "MGO(WT%)",
+  "CaO"           = "CAO(WT%)",
+  "Na2O"          = "NA2O(WT%)",
+  "K2O"           = "K2O(WT%)",
+  "P2O5"          = "P2O5(WT%)",
+  "Eruption"      = "Eruption",
+  "New_Vei"       = "VEI"
+)
+
+
+
+
+# Appliquer le renommage
+vei7_eruptions <- rocks_all_info_vei_7 %>%
+  rename(all_of(col_mapping)) %>%
+  dplyr::select(names(col_mapping))  # garde juste les colonnes renommées
+
+
+
+
+
+```
+
+
+
+now lets do the alr transformation 
+
+```{r}
+# oxide list
+oxydes <- c("SiO2", "TiO2", "Al2O3", "FeOT", "MnO", "MgO", "CaO", "Na2O", "K2O", "P2O5")
+
+# oxide reference 
+ref_oxyde <- "SiO2"
+
+# alr and drop the non alr columns
+vei7_eruptions_alr <- vei7_eruptions %>%
+  # Vérifie que la référence est non manquante et positive
+  dplyr::filter(!is.na(.data[[ref_oxyde]]), .data[[ref_oxyde]] > 0) %>%
+  mutate(across(
+    all_of(setdiff(oxydes, ref_oxyde)),
+    ~ log(.x / .data[[ref_oxyde]]),
+    .names = "alr_{.col}"
+  )) %>%
+  # Supprime les colonnes d'oxydes d'origine
+  dplyr::select(-all_of(oxydes))
+
+
+```
+
+
+lets group the samples by eruptions and lets do the mean + sd for each eruption 
+
+```{r}
+eruption_summary_vei7_stats <- vei7_eruptions_alr %>%
+  dplyr::filter(!is.na(New_Vei)) %>%
+  group_by(Eruption) %>%
+  summarise(
+    across(
+      matches("^alr_"),
+      ~ mean(.x, na.rm = TRUE) + sd(.x, na.rm = TRUE)^(1/3),
+      .names = "{.col}_mean_plus_sd"
+    ),
+    .groups = "drop"
+  )
+
+
+```
+we standardize the oxides.
+
+```{r}
+# 1. Identifier les colonnes ALR
+vei7_eruptions_cols <- grep("^alr_", colnames(eruption_summary_vei7_stats), value = TRUE)
+
+# 2. Standardiser les colonnes ALR et supprimer les originales
+eruption_summary_vei7_stats <- eruption_summary_vei7_stats %>%
+  mutate(across(
+    ends_with("_mean_plus_sd"),
+    ~ scale(.)[, 1],
+    .names = "{.col}_scaled"
+  ))
+```
+
+
+
+
+
+# no vei 7 eruptions in the training set
+
+nb
+
+```{r}
+library(e1071)
+
+# Préparer les données
+train_nb <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:6) %>%
+  mutate(New_Vei = as.factor(New_Vei))
+
+X_nb <- train_nb[, X_mean_sd_cols]
+y_nb <- train_nb$New_Vei
+
+# Supprimer NA
+complete_idx <- complete.cases(X_nb)
+X_nb <- X_nb[complete_idx, ]
+y_nb <- y_nb[complete_idx]
+
+# Fusionner pour NaiveBayes (car il prend une formule)
+train_nb_final <- cbind(New_Vei = y_nb, X_nb)
+
+# Entraînement
+model_nb <- naiveBayes(New_Vei ~ ., data = train_nb_final)
+
+# Prédictions
+new_X_nb <- eruption_summary_vei7_stats[, X_mean_sd_cols]
+probs_vei7_nb <- predict(model_nb, newdata = new_X_nb, type = "raw")
+pred_classes_vei7_nb <- predict(model_nb, newdata = new_X_nb, type = "class")
+
+# Résultats
+result_vei7_nb <- cbind(
+  Eruption = eruption_summary_vei7_stats$Eruption,
+  Predicted_Class = pred_classes_vei7_nb,
+  probs_vei7_nb
+)
+
+print(result_vei7_nb)
+
+```
+
+lets see with rf -> yes
+
+```{r}
+library(randomForest)
+
+# Préparer les données
+train_rf <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:6) %>%
+  mutate(New_Vei = as.factor(New_Vei))  # RF = classification standard
+
+# Sélectionner les colonnes
+X_rf <- train_rf[, X_mean_sd_cols]
+y_rf <- train_rf$New_Vei
+
+# Entraînement du modèle
+model_rf <- randomForest(
+  x = X_rf,
+  y = y_rf,
+  ntree = 500,
+  importance = TRUE
+)
+
+# Prédiction
+probs_vei7_rf <- predict(model_rf, newdata = eruption_summary_vei7_stats[, X_mean_sd_cols], type = "prob")
+pred_classes_vei7_rf <- predict(model_rf, newdata = eruption_summary_vei7_stats[, X_mean_sd_cols], type = "response")
+
+# Résultats
+result_vei7_rf <- cbind(
+  Eruption = eruption_summary_vei7_stats$Eruption,
+  Predicted_Class = pred_classes_vei7_rf,
+  probs_vei7_rf
+)
+
+
+print(result_vei7_rf)
+```
+
+```{r graphique }
+library(dplyr)
+library(ggplot2)
+
+# DataFrames bien formatés
+df_nb <- data.frame(
+  Eruption = eruption_summary_vei7_stats$Eruption,
+  Predicted_VEI = pred_classes_vei7_nb,
+  probs_vei7_nb,
+  Model = "Naive Bayes"
+)
+
+df_rf <- data.frame(
+  Eruption = eruption_summary_vei7_stats$Eruption,
+  Predicted_VEI = pred_classes_vei7_rf,
+  probs_vei7_rf,
+  Model = "Random Forest"
+)
+
+# Ordre logique des VEI
+vei_levels <- as.character(0:7)
+df_nb$Predicted_VEI <- factor(df_nb$Predicted_VEI, levels = vei_levels, ordered = TRUE)
+df_rf$Predicted_VEI <- factor(df_rf$Predicted_VEI, levels = vei_levels, ordered = TRUE)
+
+# Fusion
+df_all <- bind_rows(df_nb, df_rf)
+df_all$Eruption <- factor(df_all$Eruption, levels = unique(df_all$Eruption))
+
+# Tracé
+ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
+  geom_point(size = 4, alpha = 0.8, position = position_dodge(width = 0.5)) +
+  theme_minimal() +
+  labs(
+    title = "Predicted VEI for VEI 7 Eruptions (mean + cuberoot(sd))",
+    x = "Eruption",
+    y = "Predicted VEI"
+  ) +
+  scale_y_discrete(limits = vei_levels) +  # 👈 Affiche tous les VEI de 0 à 7
+  scale_color_manual(values = c("Naive Bayes" = "steelblue", "Random Forest" = "darkorange")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+
+
+
+
+
+
+
+
+lets try to add some vei 7 eruptions to the train set
+
+
+```{r}
+vei7_to_add <- eruption_summary_vei7_stats %>%
+  dplyr::filter(Eruption %in% c("Crater Lake 5750 BCE", "Santorini 1600 BCE", "Rinjani 1257")) %>%
+  mutate(New_Vei = 7)
+
+```
+
+new train dataset
+
+```{r}
+train_augmented <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:6) %>%
+  bind_rows(vei7_to_add) %>%
+  mutate(New_Vei = factor(New_Vei, ordered = TRUE))
+
+
+```
+
+keep other vei 7 for the test
+
+```{r}
+vei7_holdout <- eruption_summary_vei7_stats %>%
+  dplyr::filter(!Eruption %in% c("Crater Lake 5750 BCE", "Santorini 1600 BCE", "Rinjani 1257"))
+
+
+```
+
+nb
+
+```{r}
+library(e1071)
+
+# Préparer les données pour Naive Bayes
+# (y doit être un facteur, ce que tu fais déjà)
+
+# Supprimer les lignes avec des NA dans les colonnes explicatives
+complete_idx_nb <- complete.cases(train_augmented[, X_mean_sd_cols])
+train_nb <- train_augmented[complete_idx_nb, ]
+
+# Créer un data.frame complet pour l'entraînement
+train_nb_final <- train_nb[, c("New_Vei", X_mean_sd_cols)]
+
+# Entraînement du modèle NB
+model_nb_aug <- naiveBayes(New_Vei ~ ., data = train_nb_final)
+
+# Prédictions sur les VEI 7 non vus
+X_pred_nb <- vei7_holdout[, X_mean_sd_cols]
+X_pred_nb <- X_pred_nb[complete.cases(X_pred_nb), ]  # sécu
+
+probs_nb_aug <- predict(model_nb_aug, newdata = X_pred_nb, type = "raw")
+pred_nb_aug <- predict(model_nb_aug, newdata = X_pred_nb, type = "class")
+
+# Résultats combinés
+result_vei7_nb_aug <- cbind(
+  Eruption = vei7_holdout$Eruption[complete.cases(X_pred_nb)],
+  Predicted_Class = pred_nb_aug,
+  probs_nb_aug
+)
+
+print(result_vei7_nb_aug)
+
+```
+
+rf
+
+```{r}
+
+
+library(randomForest)
+
+model_rf_aug <- randomForest(
+  x = train_augmented[, X_mean_sd_cols],
+  y = train_augmented$New_Vei,
+  ntree = 500,
+  importance = TRUE
+)
+
+
+probs_rf_aug <- predict(model_rf_aug, newdata = vei7_holdout[, X_mean_sd_cols], type = "prob")
+pred_rf_aug <- predict(model_rf_aug, newdata = vei7_holdout[, X_mean_sd_cols], type = "response")
+
+
+result_rf_aug <- cbind(
+  Eruption = vei7_holdout$Eruption,
+  Predicted_Class = pred_rf_aug,
+  probs_rf_aug
+)
+
+print(result_rf_aug)
+
+```
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Transformer les matrices en data.frames bien nommés
+df_nb <- data.frame(
+  Eruption = vei7_holdout$Eruption[complete.cases(X_pred_nb)],
+  Predicted_VEI = pred_nb_aug,
+  probs_nb_aug,
+  Model = "Naive Bayes"
+)
+
+df_rf <- data.frame(
+  Eruption = vei7_holdout$Eruption,
+  Predicted_VEI = pred_rf_aug,
+  probs_rf_aug,
+  Model = "Random Forest"
+)
+
+# Ajouter la proba max pour chaque prédiction
+df_nb <- df_nb %>%
+  rowwise() %>%
+  mutate(Max_Prob = max(c_across(where(is.numeric)))) %>%
+  ungroup()
+
+df_rf <- df_rf %>%
+  rowwise() %>%
+  mutate(Max_Prob = max(c_across(where(is.numeric)))) %>%
+  ungroup()
+
+# Forcer l’ordre VEI
+vei_levels <- as.character(0:7)
+df_nb$Predicted_VEI <- factor(df_nb$Predicted_VEI, levels = vei_levels, ordered = TRUE)
+df_rf$Predicted_VEI <- factor(df_rf$Predicted_VEI, levels = vei_levels, ordered = TRUE)
+
+# Fusion
+df_all$Predicted_VEI <- factor(df_all$Predicted_VEI, levels = vei_levels, ordered = TRUE)
+df_all <- bind_rows(df_nb, df_rf)
+df_all$Eruption <- factor(df_all$Eruption, levels = unique(df_all$Eruption))
+
+# Graphique avec label de la proba
+ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
+  geom_point(size = 4, alpha = 0.8, position = position_dodge(width = 0.6)) +
+  theme_minimal() +
+  labs(
+    title = "Predicted VEI for VEI 7 Eruptions (mean + cuberoot(sd))",
+    x = "Eruption",
+    y = "Predicted VEI"
+  ) +
+  scale_y_discrete(limits = vei_levels) +  # 👈 Forcer l'affichage de tous les VEI
+  scale_color_manual(values = c("Naive Bayes" = "steelblue", "Random Forest" = "darkorange")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+```
+
