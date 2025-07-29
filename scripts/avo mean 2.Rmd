@@ -187,24 +187,8 @@ eruption_summary_oxides_vei_volcano <- avo_alr %>%
 
 
 
-we standardize the oxides.
+## === STEP 2 : we standardize the oxides.
 
-```{r, eval=FALSE}
-# 1. Identifier les colonnes ALR
-alr_cols <- grep("^alr_", colnames(avo_alr), value = TRUE)
-
-# 2. Standardiser les colonnes ALR et supprimer les originales
-avo_alr_scaled <- avo_alr %>%
-  mutate(across(
-    all_of(alr_cols),
-    ~ scale(.)[, 1],
-    .names = "{.col}_z" # new name to know its the standardized values
-  )) %>%
-  # 3. Supprimer les colonnes ALR brutes
-  dplyr::select(-all_of(alr_cols))
-
-
-```
 
 
 ```{r}
@@ -220,7 +204,7 @@ eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
 
 
 
-
+## === STEP 3 : Prepare all 200 train/test splits (Stratified splitting by eruption VEI) ===
 
 # MEAN
 
