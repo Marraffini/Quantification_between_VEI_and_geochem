@@ -1,0 +1,433 @@
+---
+title: "georoc avo"
+output: html_document
+date: "2025-07-01"
+---
+
+Description :
+
+In this script, we will see whether AVO is representative of GEOROC. 
+
+Questions we can ask ourselves :
+-> we dont have many samples in avo, would that be very important to consider ? 
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+
+library(readxl)
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(recipes)
+library(caret)
+library(stats)
+library(car)
+library(broom)
+library(MASS)
+library(janitor)
+library(dplyr)
+library(ggstatsplot)
+library(palmerpenguins)
+```
+
+
+```{r}
+avo_filtered = read_csv("/Users/annad/Documents/NZ Internship/avo_filtered.csv", show_col_types = FALSE)
+
+georoc = read_csv("/Users/annad/Documents/NZ Internship/rocks all info/rocks_all_infos.csv", show_col_types = FALSE)
+```
+
+lets keep the samples of georoc where the eruption year is known. 
+
+```{r}
+georoc_eruption_year_known <- georoc %>% 
+  dplyr::filter(!is.na(`ERUPTION YEAR`))
+```
+
+georoc has 22 452 samples while georoc_eruption_year_known only has 1018.
+
+This should be easier to compare AVO and GEOROC, knowing that AVO has 1260 samples. 
+
+
+
+here lets have the samples with no known eruption year so we can put it onto the tas diagram
+
+```{r}
+georoc_eruption_year_unknown <- georoc %>% 
+  dplyr::filter(is.na(`ERUPTION YEAR`))
+```
+
+
+i noticed that there are weird values in al2O3, so i decided that if sum oxides is greater than 100.5 i would drop the rows
+
+```{r}
+georoc_eruption_year_unknown <- georoc_eruption_year_unknown %>%
+  dplyr::filter(`Sum Oxides` <= 100.5)
+
+```
+
+
+
+
+
+# TAS DIAGRAM TO COMPARE AVO AND GEOROC (MAYBE DELETE LATER)
+
+```{r}
+# GEOROC known
+georoc_known_tas <- georoc_eruption_year_known %>%
+  transmute(
+    SiO2 = `SIO2(WT%)`,
+    Total_Alkalis = `NA2O(WT%)` + `K2O(WT%)`,
+    source = "GEOROC (known)"
+  )
+
+# GEOROC unknown
+georoc_unknown_tas <- georoc_eruption_year_unknown %>%
+  transmute(
+    SiO2 = `SIO2(WT%)`,
+    Total_Alkalis = `NA2O(WT%)` + `K2O(WT%)`,
+    source = "GEOROC (unknown)"
+  )
+
+# AVO
+avo_tas <- avo_filtered %>%
+  transmute(
+    SiO2 = SiO2,
+    Total_Alkalis = Na2O + K2O,
+    source = "AVO"
+  )
+
+# Fusionner les trois
+combined_tas <- bind_rows(georoc_known_tas, georoc_unknown_tas, avo_tas) %>%
+  dplyr::filter(!is.na(SiO2), !is.na(Total_Alkalis))
+
+
+
+combined_tas <- combined_tas %>%
+  mutate(alpha_val = if_else(source == "GEOROC (unknown)", 0.001, 0.12))
+
+
+ggplot(combined_tas, aes(x = SiO2, y = Total_Alkalis, color = source, alpha = alpha_val)) +
+  geom_point() +
+  theme_minimal() +
+  labs(
+    title = "TAS Diagram : comparison AVO vs GEOROC (known) vs GEOROC (unknown)",
+    x = "SiO₂ (%)",
+    y = "Na₂O + K₂O (%)"
+  ) +
+  scale_color_manual(values = c("AVO" = "#1f77b4", "GEOROC (known)" = "purple", "GEOROC (unknown)" = "yellow")) +
+  guides(alpha = "none")  # pour ne pas afficher l’alpha dans la légende
+
+library(ggplot2)
+
+
+ggplot(combined_tas, aes(x = SiO2, y = Total_Alkalis, color = source)) +
+  geom_point(alpha = 0.33) +
+  #facet_wrap(.~source) +
+  theme_minimal() +
+  labs(
+    title = "TAS Diagram : comparison AVO vs GEOROC (known) vs GEOROC (unknown)",
+    x = "SiO₂ (%)",
+    y = "Na₂O + K₂O (%)"
+  ) +
+  scale_color_manual(values = c("AVO" = "#1f77b4", "GEOROC (known)" = "#ff7f0e", "GEOROC (unknown)" = "green"))
+
+
+ggplot(combined_tas, aes(x = SiO2, y = Total_Alkalis, color = source)) +
+  geom_point(alpha = 0.33) +
+  facet_wrap(.~source) +
+  theme_minimal() +
+  labs(
+    title = "TAS Diagram : comparison AVO vs GEOROC (known) vs GEOROC (unknown)",
+    x = "SiO₂ (%)",
+    y = "Na₂O + K₂O (%)"
+  ) +
+  scale_color_manual(values = c("AVO" = "#1f77b4", "GEOROC (known)" = "#ff7f0e", "GEOROC (unknown)" = "green"))
+
+```
+- could the georock ones but submarine or other types of volcanoes that are inherently different?
+
+idk what to think about this new tas diagram
+
+
+```{r}
+ggplot() +
+  # GEOROC (unknown) - forme étoile vide
+  geom_point(
+    data = subset(combined_tas, source == "GEOROC (unknown)"),
+    aes(x = SiO2, y = Total_Alkalis, color = "GEOROC (unknown)"),
+    shape = 8, alpha = 0.2
+  ) +
+  # GEOROC (known) - cercle plein orange
+  geom_point(
+    data = subset(combined_tas, source == "GEOROC (known)"),
+    aes(x = SiO2, y = Total_Alkalis, color = "GEOROC (known)"),
+    shape = 16, alpha = 0.3
+  ) +
+  # AVO - cercle plein bleu
+  geom_point(
+    data = subset(combined_tas, source == "AVO"),
+    aes(x = SiO2, y = Total_Alkalis, color = "AVO"),
+    shape = 16, alpha = 0.3
+  ) +
+  scale_color_manual(
+    name = "Source",
+    values = c(
+      "AVO" = "#1f77b4",
+      "GEOROC (known)" = "#ff7f0e",
+      "GEOROC (unknown)" = "grey50"
+    )
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = c(0.03, 0.97),  # en haut à gauche
+    legend.justification = c(0, 1),   # coin supérieur gauche
+    legend.background = element_rect(fill = "white", color = "grey80")
+  ) +
+  labs(
+    title = "TAS Diagram : comparison AVO vs GEOROC (known) vs GEOROC (unknown)",
+    x = "SiO₂ (%)",
+    y = "Na₂O + K₂O (%)"
+  )
+
+```
+
+
+
+
+```{r}
+oxide_cols_geo <- c("SIO2(WT%)", "TIO2(WT%)", "AL2O3(WT%)", "CAO(WT%)", "MGO(WT%)", "MNO(WT%)",
+                    "K2O(WT%)", "NA2O(WT%)", "P2O5(WT%)")
+oxide_cols_avo <- c("SiO2", "TiO2", "Al2O3", "CaO", "MgO", "MnO",
+                    "K2O", "Na2O", "P2O5")
+# Pour correspondre à une seule liste commune
+oxide_common_names <- c("SiO2", "TiO2", "Al2O3", "CaO", "MgO", "MnO",
+                        "K2O", "Na2O", "P2O5")
+
+```
+
+
+
+```{r}
+
+# AVO
+avo_long <- avo_filtered %>%
+  dplyr::select(all_of(oxide_cols_avo)) %>%
+  set_names(oxide_common_names) %>% # we use the same names of oxides for the df
+  mutate(source = "AVO") %>% # add a new column source with value "AVO" to indicate the data source
+  pivot_longer(cols = all_of(oxide_common_names), names_to = "Oxide", values_to = "value") # transform the dataframe into long format
+
+# GEOROC known
+georoc_long_known <- georoc_eruption_year_known %>%
+  dplyr::select(all_of(oxide_cols_geo)) %>%
+  set_names(oxide_common_names) %>% # we use the same names of oxides for the df
+  mutate(source = "GEOROC (known)") %>%
+  pivot_longer(cols = all_of(oxide_common_names), names_to = "Oxide", values_to = "value")
+
+
+# GEOROC unknown
+georoc_long_unknown <- georoc_eruption_year_unknown %>%
+  dplyr::select(all_of(oxide_cols_geo)) %>%
+  set_names(oxide_common_names) %>% # we use the same names of oxides for the df
+  mutate(source = "GEOROC (unknown)") %>%
+  pivot_longer(cols = all_of(oxide_common_names), names_to = "Oxide", values_to = "value")
+
+
+# Fusion
+combined_long <- bind_rows(avo_long, georoc_long_known, georoc_long_unknown) # combine the two dataframes by stacking them by row
+
+```
+
+
+idk whether to do geom_point or geom_jitter
+```{r fig.width=14, fig.height=8}
+
+
+
+
+ggplot(combined_long, aes(x = source, y = value, fill = source)) + # fill = source is to color based on the source
+  geom_violin(alpha = 0.3) + # violin plot
+  geom_boxplot(width = 0.1) + # boxplot
+  #geom_point(width = 0.1, size = 0.5, alpha = 0.3) + # show individual points but it can be "superposé"
+  facet_wrap(~Oxide, scales = "free_y") + # free_y creates subplot using different scale for the y but its not good so lets use fixed
+  theme_minimal() + # simple plot
+  labs(title = "Comparison of oxide distributions between AVO and GEOROC known/unknown",
+       y = "% weight", x = "")
+
+
+```
+
+
+```{r}
+georoc_eruptions_summary <- georoc_eruption_year_known %>%
+  dplyr::select(
+    `ERUPTION YEAR`,
+    LOCATION,
+    `LOCATION COMMENT`,
+    `SAMPLE NAME`,
+    `LATITUDE (MIN.)`,
+    `LONGITUDE (MIN.)`
+  )
+
+
+```
+
+
+```{r}
+library(dplyr)
+
+samples_per_year <- georoc_eruption_year_known %>%
+  count(`ERUPTION YEAR`, name = "n_samples") %>%
+  arrange(desc(n_samples))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+# same plots, but individuals bc i can not see
+# i used geom_point and not jitter and hid outliers from the boxplots
+for (oxide_name in unique(combined_long$Oxide)) {
+  plot <- ggplot(combined_long %>% filter(Oxide == oxide_name),
+                 aes(x = source, y = value, fill = source)) +
+    geom_violin(alpha = 0.3) +
+    geom_boxplot(width = 0.1, outlier.shape = NA) +
+    geom_point(width = 0.1, size = 0.7, alpha = 0.3) +
+    labs(title = paste("Distribution of", oxide_name),
+         x = NULL, y = "% weight") +
+    theme_minimal(base_size = 14) +
+    scale_fill_manual(values = c("AVO" = "#E76F51", "GEOROC" = "#2A9D8F")) +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "bottom"
+    )
+  
+  print(plot)  # indispensable pour voir le plot dans la boucle
+}
+
+```
+
+
+
+
+ggbetweenstats
+
+shows : boxplots, points, violin plots, statistical tests, p_value
+
+```{r,eval=FALSE}
+
+
+for (oxide_name in unique(combined_long$Oxide)) {
+  print(
+    ggbetweenstats(
+      data = combined_long %>% filter(Oxide == oxide_name), # filter to keep only one oxide
+      x = source, # x is the source (avo or georoc)
+      y = value, # oxide concentration in weight %
+      title = paste("Comparison of", oxide_name, "distributions between AVO and GEOROC")
+    )
+  )
+}
+
+```
+
+
+
+
+# georoc known tas diagram
+
+```{r}
+georoc_known <- georoc_eruption_year_known %>%
+  transmute(
+    SiO2 = `SiO2`,
+    Total_Alkalis = `Na2O` + `K2O`,
+    Rock_name = `ROCK NAME`,
+    source = "georoc_eruption_year_known"
+  )
+
+
+
+
+ggplot(georoc_long_known, aes(x = SiO2, y = Total_Alkalis, color = Rock_name)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal() +
+  labs(
+    title = "TAS Diagram : Rock Type of georoc_eruption_year_known",
+    x = "SiO₂ (%)",
+    y = "Na₂O + K₂O (%)",
+    color = "ROCK NAME"
+  )
+```
+
+
+
+
+# georoc unknown tas diagram
+
+```{r}
+georoc_eruption_year_unknown2 <- georoc_eruption_year_unknown %>%
+  transmute(
+    SiO2 = `SiO2`,
+    Total_Alkalis = `Na2O` + `K2O`,
+    Rock_name = `ROCK NAME`,  
+    source = "georoc_eruption_year_unknown"
+  )
+
+
+
+ggplot(georoc_eruption_year_unknown2, aes(x = SiO2, y = Total_Alkalis, color = Rock_name)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal() +
+  labs(
+    title = "TAS Diagram : Rock Type of georoc_eruption_year_unknown",
+    x = "SiO₂ (%)",
+    y = "Na₂O + K₂O (%)",
+    color = "ROCK NAME"
+  )
+```
+
+
+
+
+
+
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

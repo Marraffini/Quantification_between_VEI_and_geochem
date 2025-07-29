@@ -1,0 +1,1193 @@
+---
+title: "GVP VEI 7 (corrected)"
+output: html_document
+date: "2025-06-22"
+---
+
+
+Description :
+
+This script will isolate the vei 7 eruptions within GVP. Then, using the the data from GEOROC (after filtering), we will try to find some correspondance between gvp_vei_7 and GEOROC.
+How ? By searching for the name of the volcanoes who had a vei 7 eruption in the LOCATION/LOCATION COMMENT in GEOROC. 
+
+At the end, this script will give a csv containing the all the data relating to a vei 7 eruption (so volcanoes, samples, etc...)
+
+
+
+Libraries to import
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(recipes)
+library(caret)
+library(stats)
+library(car)
+library(broom)
+library(MASS)
+library(janitor)
+library(dplyr)
+library(readr)
+library(purrr)
+library(tidyr)
+library(factoextra)
+library(cluster)
+library(reshape2)
+library(ggpubr)
+
+```
+
+
+# GVP
+
+
+GVP_known_land_2 was created from the GVP database after much filtering.
+
+→ keep the rows with existing VEI and Confirmed Eruption
+→ delete "Unknown", "Unnamed", "False"
+→ there's duplicates : after checking with Mark, I assign new names to the volcanoes so there wouldn't be duplicates anymore
+→ delete submarine and odd-named volcanoes
+→ delete when it had "sea" or "reef" in the name
+
+```{r import GVP}
+
+GVP_known_land_2 = read_csv("/Users/annad/Documents/NZ Internship/GVP_known_land_2.csv", show_col_types = FALSE)
+
+```
+
+
+```{r}
+# Examine GVP
+length(unique(GVP_known_land_2$`Eruption Number`))
+length(unique(GVP_known_land_2$`Volcano Number`))
+```
+
+
+## VEI 7 Eruption data
+
+I want to create a new df where the VEI is 7.
+
+```{r vei7 gvp}
+# subset gvp data for only VEI7 eruptions
+gvp_vei_7 = GVP_known_land_2
+gvp_vei_7 = as.data.frame(GVP_known_land_2)
+
+
+gvp_vei_7 <- gvp_vei_7 %>% 
+  dplyr::filter(VEI == 7)
+
+# only 7
+```
+
+
+
+
+# GEOROCK
+
+I will bind all my samples (in the folder georoc rock databases).
+
+These csv are contain the samples for each big type of rocks (but within the csv you know the subtype of the rock).
+It is already filtered with all the information we need, such as the oxides, sample names, location, references (to check).
+
+```{r}
+
+alkaline_rocks_all_info = read_csv("/Users/annad/Documents/NZ Internship/rocks all info/alkaline_rocks_all_info.csv", show_col_types = FALSE)
+andesitic_rocks_all_info = read_csv("/Users/annad/Documents/NZ Internship/rocks all info/andesitic_rocks_all_info.csv", show_col_types = FALSE)
+basaltic_rocks_all_info = read_csv("/Users/annad/Documents/NZ Internship/rocks all info/basaltic_rocks_all_info.csv", show_col_types = FALSE)
+dacitic_rocks_all_info = read_csv("/Users/annad/Documents/NZ Internship/rocks all info/dacitic_rocks_all_info.csv", show_col_types = FALSE)
+trachytic_rocks_all_info = read_csv("/Users/annad/Documents/NZ Internship/rocks all info/trachytic_rocks_all_info.csv", show_col_types = FALSE)
+rhyolitic_rocks_all_info = read_csv("/Users/annad/Documents/NZ Internship/rocks all info/rhyolitic_rocks_all_info.csv", show_col_types = FALSE)
+
+rocks_all_info <- list(
+  alkaline    = alkaline_rocks_all_info,
+  andesitic   = andesitic_rocks_all_info,
+  basaltic    = basaltic_rocks_all_info,
+  dacitic     = dacitic_rocks_all_info,
+  trachytic   = trachytic_rocks_all_info,
+  rhyolitic   = rhyolitic_rocks_all_info
+)
+
+
+sapply(rocks_all_info, nrow)
+
+# alkaline andesitic  basaltic   dacitic trachytic rhyolitic 
+#     5022      3321      6255      6239       651      1086 
+# sum is equal to 22574
+
+
+# lets bind
+
+rocks_all_infos <- bind_rows(
+  alkaline  = alkaline_rocks_all_info,
+  andesitic = andesitic_rocks_all_info,
+  basaltic  = basaltic_rocks_all_info,
+  dacitic   = dacitic_rocks_all_info,
+  trachytic = trachytic_rocks_all_info,
+  rhyolitic = rhyolitic_rocks_all_info,
+  .id       = "rock_type"
+)
+
+#rocks_all_infos = write.csv(rocks_all_infos, "/Users/annad/Documents/NZ Internship/rocks all info/rocks_all_infos.csv")
+
+
+```
+
+
+
+
+## fixing GEOROCK so it can merge with GVP
+
+lets extract all rows from the rocks_all_infos dataset that are related to the "volcano name". Specifically, it filters the dataset to retain only the entries where the "volcano name" appears in at least one of the following columns: LOCATION, LOCATION COMMENT, or References.
+we do that for all volcanoes : Tambora, Rinjani, Santorini, Blanco Cerro, Kikai, Crater Lake, Kurile Lake (as per the gvp_vei_7 df).
+
+
+
+
+### lets fix the data for the volcano (some lags due to the "binding" of the database)
+
+
+KURILE LAKE (KAMCHATKA) 
+comment : need the 100km delimitation
+
+
+```{r}
+# before filtering
+rocks_all_infos_kamchatka <- rocks_all_infos %>% 
+  as.data.frame() %>% 
+  dplyr::filter(
+    str_detect(LOCATION,           regex("kamchatka", ignore_case = TRUE)) |
+    str_detect(`LOCATION COMMENT`, regex("kamchatka", ignore_case = TRUE)) |
+    str_detect(References,         regex("kamchatka", ignore_case = TRUE))
+  )
+
+#write.csv(rocks_all_infos_kamchatka, "/Users/annad/Documents/NZ Internship/rocks_all_infos_kamchatka.csv")
+
+
+
+
+
+# here we fix the coordinates
+
+# function to fix the coordinates if it has glitched  
+fix_coord <- function(x, limit) {
+  # while the value is still not in bound, divide by 10 (while the value is not in bound, divide by 10) 
+  while (abs(x) > limit) {
+    x <- x / 10
+  }
+  x
+}
+
+# we apply it to kamchatka data :
+# - Latitude values must be between -90 and 90 degrees.
+# - Longitude values must be between -180 and 180 degrees.
+
+rocks_all_infos_kamchatka <- rocks_all_infos_kamchatka %>%
+  mutate(
+    `LATITUDE (MIN.)`  = sapply(`LATITUDE (MIN.)`,  fix_coord, limit =  90),
+    `LONGITUDE (MIN.)` = sapply(`LONGITUDE (MIN.)`, fix_coord, limit = 180),
+    `LATITUDE (MAX.)`  = sapply(`LATITUDE (MAX.)`,  fix_coord, limit =  90),
+    `LONGITUDE (MAX.)` = sapply(`LONGITUDE (MAX.)`, fix_coord, limit = 180),
+    
+    lat = `LATITUDE (MIN.)`, # i put a different name bc here lat/lon min is the same as lat/lon max
+    lon = `LONGITUDE (MIN.)`
+  )
+
+
+
+# keep coordinates that match kurile lake vei 7 and 50 km (included) around it
+# (bc sometimes the coordinates are really different)
+library(geosphere)
+
+centre <- c(157.12, 51.45)  # lon, lat
+
+rocks_all_infos_kamchatka <- rocks_all_infos_kamchatka %>%
+  mutate(
+    dist_m = distHaversine(cbind(lon, lat), centre) # 
+  ) %>%
+  dplyr::filter(dist_m <=  100000)  # 100 km maximum
+
+
+
+```
+
+
+
+CERRO BLANCO
+comment : dont need the 100km limit
+
+```{r}
+# before filtering
+rocks_all_infos_cerro_blanco <- rocks_all_infos %>% 
+  as.data.frame() %>% 
+  dplyr::filter(
+    str_detect(LOCATION,           regex("cerro blanco", ignore_case = TRUE)) |
+    str_detect(`LOCATION COMMENT`, regex("cerro blanco", ignore_case = TRUE)) |
+    str_detect(References,         regex("cerro blanco", ignore_case = TRUE))
+  )
+
+#write.csv(rocks_all_infos_cerro_blanco, "/Users/annad/Documents/NZ Internship/rocks_all_infos_cerro_blanco.csv")
+
+
+
+# after filtering
+rocks_all_infos_cerro_blanco <- rocks_all_infos_cerro_blanco %>%
+  dplyr::filter(
+    (`LATITUDE (MIN.)`  == -26.700 & `LONGITUDE (MIN.)` == -67.700) |
+    (`LATITUDE (MIN.)`  == -267.000 & `LONGITUDE (MIN.)` == -677.000) |
+    (`LATITUDE (MAX.)`  == -267.000 & `LONGITUDE (MAX.)` == -677.000)
+  )
+
+
+# should be from 8 to 5 after filtering 
+
+
+# coordinates in good format
+
+rocks_all_infos_cerro_blanco <- rocks_all_infos_cerro_blanco %>%
+  mutate(
+    # we divide by 10 the latitudes where the absolute value is greater than 90
+    `LATITUDE (MIN.)`  = if_else(abs(`LATITUDE (MIN.)`)  >  90,
+                                 `LATITUDE (MIN.)`  / 10,
+                                 `LATITUDE (MIN.)`),
+    # we divide by 10 the longitudes where the absolute value is greater than 180
+    `LONGITUDE (MIN.)` = if_else(abs(`LONGITUDE (MIN.)`) > 180,
+                                 `LONGITUDE (MIN.)` / 10,
+                                 `LONGITUDE (MIN.)`),
+    # we divide by 10 the latitudes where the absolute value is greater than 90
+    `LATITUDE (MAX.)`  = if_else(abs(`LATITUDE (MAX.)`)  >  90,
+                                 `LATITUDE (MAX.)`  / 10,
+                                 `LATITUDE (MAX.)`),
+    # we divide by 10 the longitudes where the absolute value is greater than 180
+    `LONGITUDE (MAX.)` = if_else(abs(`LONGITUDE (MAX.)`) > 180,
+                                 `LONGITUDE (MAX.)` / 10,
+                                 `LONGITUDE (MAX.)`)
+    
+  )
+```
+
+
+
+KIKAI CALDERA
+comment : dont need the 100km limit
+
+```{r}
+rocks_all_infos_kikai <- rocks_all_infos %>% 
+  as.data.frame() %>% 
+  dplyr::filter(
+    str_detect(LOCATION,           regex("kikai", ignore_case = TRUE)) |
+    str_detect(`LOCATION COMMENT`, regex("kikai", ignore_case = TRUE)) |
+    str_detect(References,         regex("kikai", ignore_case = TRUE))
+  )
+
+# coordinates in good format
+
+rocks_all_infos_kikai <- rocks_all_infos_kikai %>%
+  mutate(
+    # we divide by 10 the latitudes where the absolute value is greater than 90
+    `LATITUDE (MIN.)`  = if_else(abs(`LATITUDE (MIN.)`)  >  90,
+                                 `LATITUDE (MIN.)`  / 10,
+                                 `LATITUDE (MIN.)`),
+    # we divide by 10 the longitudes where the absolute value is greater than 180
+    `LONGITUDE (MIN.)` = if_else(abs(`LONGITUDE (MIN.)`) > 180,
+                                 `LONGITUDE (MIN.)` / 10,
+                                 `LONGITUDE (MIN.)`)
+  )
+```
+
+
+
+TAMBORA
+comment : dont need the 100km limit
+
+```{r}
+rocks_all_infos_tambora <- rocks_all_infos %>% 
+  as.data.frame() %>% 
+  dplyr::filter(
+    str_detect(LOCATION,           regex("tambora", ignore_case = TRUE)) |
+    str_detect(`LOCATION COMMENT`, regex("tambora", ignore_case = TRUE)) |
+    str_detect(References,         regex("tambora", ignore_case = TRUE))
+  )
+
+# coordinates in good format
+
+rocks_all_infos_tambora <- rocks_all_infos_tambora %>%
+  mutate(
+    # we divide by 10 the latitudes where the absolute value is greater than 90
+    `LATITUDE (MIN.)`  = if_else(abs(`LATITUDE (MIN.)`)  >  90,
+                                 `LATITUDE (MIN.)`  / 10,
+                                 `LATITUDE (MIN.)`),
+    # we divide by 10 the longitudes where the absolute value is greater than 180
+    `LONGITUDE (MIN.)` = if_else(abs(`LONGITUDE (MIN.)`) > 180,
+                                 `LONGITUDE (MIN.)` / 10,
+                                 `LONGITUDE (MIN.)`)
+  )
+```
+
+
+SANTORINI
+comment : dont need the 100km limit
+
+```{r}
+rocks_all_infos_santorini <- rocks_all_infos %>% 
+  as.data.frame() %>% 
+  dplyr::filter(
+    str_detect(LOCATION,           regex("santorini", ignore_case = TRUE)) |
+    str_detect(`LOCATION COMMENT`, regex("santorini", ignore_case = TRUE)) |
+    str_detect(References,         regex("santorini", ignore_case = TRUE))
+  )
+
+# coordinates in good format
+
+rocks_all_infos_santorini <- rocks_all_infos_santorini %>%
+  mutate(
+    # we divide by 10 the latitudes where the absolute value is greater than 90
+    `LATITUDE (MIN.)`  = if_else(abs(`LATITUDE (MIN.)`)  >  90,
+                                 `LATITUDE (MIN.)`  / 10,
+                                 `LATITUDE (MIN.)`),
+    # we divide by 10 the longitudes where the absolute value is greater than 180
+    `LONGITUDE (MIN.)` = if_else(abs(`LONGITUDE (MIN.)`) > 180,
+                                 `LONGITUDE (MIN.)` / 10,
+                                 `LONGITUDE (MIN.)`)
+  )
+```
+
+
+RINJANI (SALAMAS)
+comment : dont need the 100km limit
+
+```{r}
+rocks_all_infos_rinjani <- rocks_all_infos %>% 
+  as.data.frame() %>% 
+  dplyr::filter(
+    str_detect(LOCATION,           regex("rinjani", ignore_case = TRUE)) |
+    str_detect(`LOCATION COMMENT`, regex("rinjani", ignore_case = TRUE)) |
+    str_detect(References,         regex("rinjani", ignore_case = TRUE))
+  )
+
+
+fix_coord <- function(x, limit) {
+  while (abs(x) > limit || abs(x) %% 1 == 0 && abs(x) > limit/10) {
+    x <- x / 10
+  }
+  x
+}
+
+
+rocks_all_infos_rinjani <- rocks_all_infos_rinjani %>%
+  mutate(
+    `LATITUDE (MIN.)`  = sapply(`LATITUDE (MIN.)`,  fix_coord, limit =  90),
+    `LONGITUDE (MIN.)` = sapply(`LONGITUDE (MIN.)`, fix_coord, limit = 180),
+    `LATITUDE (MAX.)`  = sapply(`LATITUDE (MAX.)`,  fix_coord, limit =  90),
+    `LONGITUDE (MAX.)` = sapply(`LONGITUDE (MAX.)`, fix_coord, limit = 180)
+  )
+
+
+# still something is wrong with some latitudes, but i think its human error and not a different volcano
+
+rocks_all_infos_rinjani <- rocks_all_infos_rinjani %>%
+  mutate(
+    `LATITUDE (MIN.)`  = sapply(`LATITUDE (MIN.)`,  fix_coord, limit =  90),
+    `LONGITUDE (MIN.)` = sapply(`LONGITUDE (MIN.)`, fix_coord, limit = 180),
+    `LATITUDE (MAX.)`  = sapply(`LATITUDE (MAX.)`,  fix_coord, limit =  90),
+    `LONGITUDE (MAX.)` = sapply(`LONGITUDE (MAX.)`, fix_coord, limit = 180),
+    
+    # if the longitude is close to Indonesia, and the latitude is too low, we correct
+    `LATITUDE (MIN.)` = ifelse(
+      `LATITUDE (MIN.)` < -60 & `LONGITUDE (MIN.)` > 100 & `LONGITUDE (MIN.)` < 130,
+      `LATITUDE (MIN.)` / 10,
+      `LATITUDE (MIN.)`
+    ),
+    
+    `LATITUDE (MAX.)` = ifelse(
+      `LATITUDE (MAX.)` < -60 & `LONGITUDE (MAX.)` > 100 & `LONGITUDE (MAX.)` < 130,
+      `LATITUDE (MAX.)` / 10,
+      `LATITUDE (MAX.)`
+    )
+  )
+
+
+```
+
+
+CRATER LAKE (MAZAMA)
+comment : dont need the 100km limit
+
+```{r}
+# before filtering mount baker
+rocks_all_infos_crater_lake_mazama <- rocks_all_infos %>% 
+  as.data.frame() %>% 
+  dplyr::filter(
+    str_detect(LOCATION,           regex("mazama", ignore_case = TRUE)) |
+    str_detect(`LOCATION COMMENT`, regex("mazama", ignore_case = TRUE)) |
+    str_detect(References,         regex("mazama", ignore_case = TRUE))
+  )
+
+# after filtering
+rocks_all_infos_crater_lake_mazama <- rocks_all_infos_crater_lake_mazama %>%
+  dplyr::filter(
+    !grepl("BAKER", LOCATION, ignore.case = TRUE)
+  )
+  
+# coordinates in good format
+
+rocks_all_infos_crater_lake_mazama <- rocks_all_infos_crater_lake_mazama %>%
+  mutate(
+    # we divide by 10 the latitudes where the absolute value is greater than 90
+    `LATITUDE (MIN.)`  = if_else(abs(`LATITUDE (MIN.)`)  >  90,
+                                 `LATITUDE (MIN.)`  / 10,
+                                 `LATITUDE (MIN.)`),
+    # we divide by 10 the longitudes where the absolute value is greater than 180
+    `LONGITUDE (MIN.)` = if_else(abs(`LONGITUDE (MIN.)`) > 180,
+                                 `LONGITUDE (MIN.)` / 10,
+                                 `LONGITUDE (MIN.)`)
+  )
+```
+
+
+
+
+## Bind all GEOROCK together
+
+
+notes from 23/06/25 : so i never bind gvp and georoc together here. what i do is :
+i use gvp_vei_7 to see which volcanoes have had vei 7 eruptions and then in georoc, i check for the names (and check if its right with the coordinates) of the volcanoes in the location/location comment. so i come to the realisation that i am losing the volcano number and the eruption number somewhere along the way. 
+i think here is the best moment to add it back.
+
+I want to bind everything
+
+```{r come here}
+
+rocks_all_info_vei_7 <- bind_rows(
+  list(
+    cb      = rocks_all_infos_cerro_blanco,
+    clm     = rocks_all_infos_crater_lake_mazama,
+    kam     = rocks_all_infos_kamchatka,
+    rinjani = rocks_all_infos_rinjani,
+    sant    = rocks_all_infos_santorini,
+    kikai   = rocks_all_infos_kikai,
+    tambora = rocks_all_infos_tambora
+  ),
+  .id = "source_df"
+)
+
+# 2) rename the column source_df in Volcano Name
+rocks_all_info_vei_7 <- rename(
+  rocks_all_info_vei_7,
+  `Volcano Name` = source_df
+)
+
+# 3) Convert short labels to full names
+rocks_all_info_vei_7$`Volcano Name` <- dplyr::recode(
+  rocks_all_info_vei_7$`Volcano Name`,
+  cb      = "Blanco, Cerro",
+  clm     = "Crater Lake",
+  kam     = "Kurile Lake",
+  rinjani = "Rinjani",
+  sant    = "Santorini",
+  kikai   = "Kikai",
+  tambora = "Tambora"
+)
+
+
+# 4) lets add Volcano Number and Eruption Number
+
+# add of "Volcano Number" and "Eruption number" to rocks_all_info_vei_7
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  left_join(
+    gvp_vei_7 %>%
+      dplyr::select(`Volcano Name`, `Volcano Number`, `Eruption Number`, `Start Year`, `Start Year Uncertainty`) %>%
+      distinct(),  # in case there are multiple rows for the same volcano
+    by = "Volcano Name"
+  )
+
+
+#write.csv(rocks_all_info_vei_7, "/Users/annad/Documents/NZ Internship/rocks_all_info_vei_7.csv")
+
+colnames(rocks_all_info_vei_7)
+```
+
+In rocks_all_info_vei_7, I have all the information : Volcano Name, oxides, samples, references (all this is the most important information for now), etc...
+I dont need to include a VEI column yet, since I know it is VEI 7.
+
+BUT eruption year is not filled in so we need to link with GVP.
+
+
+
+I am creating a table with all the references of the rocks_all_info_vei_7 and how many samples there are for each reference.
+
+I want to create this table bc I need to know from which eruption the samples come from. By knowing the eruption, I know the date AND I know which samples are coming from a VEI 7 eruption or not. 
+```{r}
+length(unique(rocks_all_info_vei_7$CITATION))
+length(unique(rocks_all_info_vei_7$References))
+
+citation_table <- rocks_all_info_vei_7 %>%
+  dplyr::count(References, sort = TRUE) %>%
+  dplyr::rename(`samples nb` = n)
+
+
+#write.csv(citation_table, "/Users/annad/Documents/NZ Internship/citation_table.csv")
+
+```
+The csv is looking something like this (not actual table this is just an example) :
+
+References                                                           samples nb
+
+[10054] PE-PIPER G., PIPER D. J. W.:                                    58
+SPATIAL AND TEMPORAL VARIATION IN 
+LATE CENOZOIC BACK-ARC VOLCANIC ROCKS, AEGEAN SEA REGION 
+
+
+
+
+This is something you have to do by hand, so if there are lots of references, this can take quite a while. 
+
+### Step 1 : we are going to drop the samples not linked to a vei 7 eruption
+(So search for the references on internet and hope for the best)
+
+
+
+#### delete some CITATION_ID
+```{r drop samples}
+ids_to_remove <- c(
+  24567, 21120, 13643, 20515, 13283, 13470, 5012, 5552, 5545, 16006,
+  23928, 15102, 3500, 3393, 9217, 5013, 14145, 6509, 5709, 14233, 15102, 3732, 3645
+)
+
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::filter(!CITATION_ID %in% ids_to_remove)
+
+```
+
+
+
+#### Remove only the samples that do not match specific terms in the LOCATION COMMENT column
+```{r}
+
+# ID 13696 – only keep those who mention "minoan eruption"
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::filter(
+    CITATION_ID != 13696 | 
+      (CITATION_ID == 13696 & str_detect(tolower(`LOCATION COMMENT`), "minoan eruption"))
+  )
+
+# ID 6756 – only keep those who mention "minoan eruption"
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::filter(
+    CITATION_ID != 6756 | 
+      (CITATION_ID == 6756 & str_detect(tolower(`LOCATION COMMENT`), "minoan eruption"))
+  )
+
+# ID 18499 – only keep those who mention "minoan eruption"
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::filter(
+    CITATION_ID != 18499 | 
+      (CITATION_ID == 18499 & str_detect(tolower(`LOCATION COMMENT`), "minoan eruption"))
+  )
+
+# ID 20579 – only keep those who mention "minoan tuff"
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::filter(
+    CITATION_ID != 20579 | 
+      (CITATION_ID == 20579 & str_detect(tolower(`LOCATION COMMENT`), "minoan tuff"))
+  )
+
+# ID 4826 – only keep those who mention "minoan eruption"
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::filter(
+    CITATION_ID != 4826 | 
+      (CITATION_ID == 4826 & str_detect(tolower(`LOCATION COMMENT`), "minoan eruption"))
+  )
+
+###
+id_3737 <- 3737
+
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::filter(!(CITATION_ID == 3737 & str_detect(tolower(`SAMPLE NAME`), "samp. t23")))
+
+
+###
+
+id_17450 <- 17450
+
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::filter(
+    CITATION_ID != 17450 |
+      str_detect(tolower(`SAMPLE NAME`), "samp\\. 81c-631|samp\\. 79c-154")
+  )
+
+
+
+id_4448 <- 4448
+
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::filter(!(CITATION_ID == 4448 & str_detect(tolower(`SAMPLE NAME`), "samp. 714")))
+
+
+
+
+```
+
+
+### Step 2 : adding samples from vei 7 eruptions that weren't in GEOROCK
+
+```{r}
+###################################################################################################################################################################################################
+#id_4448 <- 4448
+
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::filter(CITATION_ID != 4448)
+
+
+new_samples <- data.frame(
+  `Volcano Name` = c("Crater Lake", "Crater Lake", "Crater Lake", "Crater Lake", "Crater Lake", "Crater Lake", "Crater Lake", "Crater Lake"),
+  `rock_type` = c("rhyolitic", "rhyolitic", "rhyolitic", "rhyolitic", "rhyolitic", "rhyolitic", "rhyolitic", "rhyolitic"),
+  `SOURCE` = rep("rhyodacit", 8),
+  `Year` = rep(1986, 8),
+  `CITATION` = rep("[4448] BACON C. R. (1986)", 8),
+  `SAMPLE NAME` = c("samp.444", "samp.860", "samp.871", "samp.560", "samp.322", "samp.106", "samp.154", "samp.1012"),
+  `UNIQUE_ID` = rep(NA, 8),
+  `LOCATION` = rep("CASCADES / HIGH CASCADES / OREGON / MOUNT MAZAMA", 8),
+  `LOCATION COMMENT` = rep("SOUTHWESTERN SLOPES", 8),
+  `LATITUDE (MIN.)` = rep(42.91, 8),
+  `LONGITUDE (MIN.)` = rep(-122.13, 8),
+  `LATITUDE (MAX.)` = rep(42.91, 8),
+  `LONGITUDE (MAX.)` = rep(-122.13, 8),
+  `LAND/SEA (SAMPLING)` = rep("SUBAERIAL", 8),
+  `ROCK TYPE` = rep("VOLCANIC ROCK", 8),
+  `ROCK NAME` = rep("RHYODACITE", 8),
+  `GEOLOGICAL AGE` = rep("", 8),
+  `TYPE OF MATERIAL` = rep("WHOLE ROCK", 8),
+  `SIO2(WT%)` = c(51.4, 54.8, 56.0, 61.6, 70.6, 59.1, 70.4, 70.8),
+  `TIO2(WT%)` = c(0.37, 0.82, 0.84, 0.82, 0.46, 0.80, 0.47, 0.49),
+  `AL2O3(WT%)` = c(10.7, 18.9, 19.4, 17.9, 15.3, 18.4, 15.3, 15.4),
+  `CAO(WT%)` = c(9.26, 8.14, 7.92, 5.31, 2.27, 7.17, 2.30, 2.35),
+  `MGO(WT%)` = c(16.8, 4.52, 3.97, 2.26, 0.76, 3.68, 0.79, 0.80),
+  `MNO(WT%)` = c(0.13, 0.13, 0.11, 0.08, 0.05, 0.07, 0.05, 0.05),
+  `K2O(WT%)` = c(0.59, 0.62, 0.82, 1.64, 2.67, 1.13, 2.56, 2.65),
+  `NA2O(WT%)` = c(2.22, 3.94, 3.95, 5.05, 5.24, 4.33, 5.27, 4.80),
+  `P2O5(WT%)` = c(0.16, 0.30, 0.14, 0.27, 0.11, 0.16, 0.11, 0.11),
+  `LOI(WT%)` = rep(NA, 8),
+  `sum_fe` = c(8.19, 7.60, 6.64, 4.89, 2.42, 4.99, 2.53, 2.54),
+  `ERUPTION YEAR` = rep(NA, 8),
+  `Sum Oxides` = c(100.05, 100.11, 100.08, 99.46, 99.49, 99.78, 99.64, 99.60),
+  `CITATION_ID` = rep(4448, 8),
+  `References` = rep("[4448] BACON C. R.:   MAGMATIC INCLUSIONS IN SILICIC AND INTERMEDIATE VOLCANIC ROCKS |  J. GEOPHYS. RES. B91    [1986]  6091-6112  | doi: 10.1029/JB091iB06p06091", 8),
+  `lat` = rep(42.91, 8),
+  `lon` = rep(-122.13, 8),
+  `dist_m` = rep(NA, 8)
+)
+
+
+# to have the same names as rocks_all_infos_vei_7
+names_corrected <- names(rocks_all_info_vei_7)                # right names
+names_cleaned   <- make.names(names_corrected)                # names transformed by R
+names(new_samples) <- setNames(names_corrected, names_cleaned)[names(new_samples)]
+
+
+
+rocks_all_info_vei_7$UNIQUE_ID <- as.numeric(rocks_all_info_vei_7$UNIQUE_ID)
+
+rocks_all_info_vei_7 <- dplyr::bind_rows(rocks_all_info_vei_7, new_samples) 
+
+
+
+```
+
+
+#### add one more sample to tambora 1815 eruption
+
+```{r}
+new_sample_tambora <- data.frame(
+  `Volcano Name` = "Tambora",
+  `rock_type` = "alkaline",
+  `SOURCE` = "phonolit",
+  `Year` = 1986,
+  `CITATION` = "[3737] FODEN J. D. (1986)",
+  `SAMPLE NAME` = "samp. T23",
+  `UNIQUE_ID` = NA,
+  `LOCATION` = "SUNDA ARC / SUNDA ARC / SUMBAWA / TAMBORA",
+  `LOCATION COMMENT` = NA,
+  `LATITUDE (MIN.)` = -8.27,
+  `LONGITUDE (MIN.)` = 117.98,
+  `LATITUDE (MAX.)` = -8.27,
+  `LONGITUDE (MAX.)` = 117.98,
+  `LAND/SEA (SAMPLING)` = "SUBAERIAL",
+  `ROCK TYPE` = "VOLCANIC ROCK",
+  `ROCK NAME` = "PHONOLIT",
+  `GEOLOGICAL AGE` = "CENOZOIC",
+  `TYPE OF MATERIAL` = "WHOLE ROCK",
+  `SIO2(WT%)` = 55.17,
+  `TIO2(WT%)` = 0.67,
+  `AL2O3(WT%)` = 19.78,
+  `CAO(WT%)` = 5.42,
+  `MGO(WT%)` = 2.50,
+  `MNO(WT%)` = 0.18,
+  `K2O(WT%)` = 5.08,
+  `NA2O(WT%)` = 4.66,
+  `P2O5(WT%)` = 0.55,
+  `LOI(WT%)` = NA,
+  `sum_fe` = 5.88,
+  `ERUPTION YEAR` = 1815,
+  `Sum Oxides` = 99.89,
+  `CITATION_ID` = 3737,
+  `References` = "[3737] FODEN J. D.:   THE PETROLOGY OF TAMBORA VOLCANO, INDONESIA: A MODEL FOR THE 1815 ERUPTION |  J. VOLCANOL. GEOTHERM. RES. 27    [1986]  1-41  | doi: 10.1016/0377-0273(86)90079-X",
+  `lat` = NA,
+  `lon` = NA,
+  `dist_m` = NA#,
+  #`Eruption date`= 1815
+)
+
+# to have the same names as rocks_all_infos_vei_7
+names_corrected_tambora <- names(rocks_all_info_vei_7)                # right names
+names_cleaned_tambora   <- make.names(names_corrected_tambora)                # names transformed by R
+names(new_sample_tambora) <- setNames(names_corrected_tambora, names_cleaned_tambora)[names(new_sample_tambora)]
+
+
+rocks_all_info_vei_7 <- dplyr::bind_rows(rocks_all_info_vei_7, new_sample_tambora) 
+```
+
+
+only 5 volcanoes left out of 7 (no data for blanco cerro and kurile lake)
+
+update 01/07/25 : actually i find a different article that had samples for kurile lake (i found one for cerro blanco but cant access it)
+
+so lets add kurile lake samples for now (https://www.sciencedirect.com/science/article/pii/S0377027304001647)
+```{r}
+new_samples_kurile <- data.frame(
+  `Volcano Name` = rep("Kurile Lake", 8),
+  `rock_type` = rep(NA, 8),
+  `SOURCE` = rep(NA, 8),
+  `Year` = rep(2004, 8),
+  `CITATION` = rep("Ponomareva et al. (2004)", 8),
+  `SAMPLE NAME` = c("sample 3 (Unit I)", "sample 4 (Unit II)", "sample 5 (Unit II)", "sample 6 (Unit III)",
+                    "sample 7 (Unit III)", "sample 8 (Unit III)", "sample 9 (Unit III)", "sample 10 (Unit III)"),
+  `UNIQUE_ID` = rep(NA, 8),
+  `LOCATION` = rep("Kamchatka / Russia / Kurile Lake", 8),
+  `LOCATION COMMENT` = rep("Proximal KO deposits", 8),
+  `LATITUDE (MIN.)` = rep(51.85, 8),
+  `LONGITUDE (MIN.)` = rep(157.5, 8),
+  `LATITUDE (MAX.)` = rep(51.85, 8),
+  `LONGITUDE (MAX.)` = rep(157.5, 8),
+  `LAND/SEA (SAMPLING)` = rep("SUBAERIAL", 8),
+  `ROCK TYPE` = rep("VOLCANIC ROCK", 8),
+  `ROCK NAME` = rep(NA, 8),
+  `GEOLOGICAL AGE` = rep("HOLOCENE", 8),
+  `TYPE OF MATERIAL` = rep("WHOLE ROCK", 8),
+  `SIO2(WT%)` = c(64.62, 70.19, 68.46, 71.46, 64.81, 60.01, 55.05, 51.95),
+  `TIO2(WT%)` = c(0.50, 0.27, 0.28, 0.29, 0.52, 0.71, 0.71, 0.84),
+  `AL2O3(WT%)` = c(15.81, 14.56, 15.15, 14.02, 16.24, 19.86, 19.29, 17.99),
+  `CAO(WT%)` = c(4.02, 2.26, 2.47, 2.42, 4.45, 6.89, 8.85, 9.88),
+  `MGO(WT%)` = c(1.45, 0.36, 0.35, 0.39, 1.57, 1.72, 3.50, 5.02),
+  `MNO(WT%)` = c(0.12, 0.07, 0.07, 0.07, 0.11, 0.13, 0.15, 0.18),
+  `K2O(WT%)` = c(1.51, 1.79, 1.68, 1.92, 1.45, 0.76, 0.58, 0.45),
+  `NA2O(WT%)` = c(3.85, 4.37, 4.36, 4.51, 3.94, 4.51, 3.29, 2.52),
+  `P2O5(WT%)` = c(0.11, 0.04, 0.04, 0.05, 0.11, 0.20, 0.13, 0.11),
+  `LOI(WT%)` = c(3.06, 4.19, 4.48, 2.85, 2.55, 0.49, 0.57, 0.16),
+  `sum_fe` = c(4.18, 1.91, 1.91, 1.91, 4.38, 5.21, 7.36, 9.84),  # Fe2O3 only
+  `ERUPTION YEAR` = rep(-6440, 8),
+  `Sum Oxides` = c(99.23, 100.01, 99.25, 99.89, 100.13, 100.49, 99.48, 98.94),
+  `CITATION_ID` = rep(NA, 8),
+  `References` = rep("The 7600 (14C) year BP Kurile Lake caldera-forming eruption,Kamchatka, Russia: stratigraphy and field relationships, Ponomareva", 8),
+  `lat` = rep(51.45, 8),
+  `lon` = rep(157.12, 8),
+  `dist_m` = rep(NA, 8),
+  #`Eruption date`= "-6440",
+  `Start Year`= -6440,
+  `End Year`= NA
+)
+
+# to have the same names as rocks_all_infos_vei_7
+names_corrected_kurile <- names(rocks_all_info_vei_7)                # noms corrects
+names_cleaned_kurile   <- make.names(names_corrected_kurile)                # noms transformés par R
+names(new_samples_kurile) <- setNames(names_corrected_kurile, names_cleaned_kurile)[names(new_samples_kurile)]
+
+
+rocks_all_info_vei_7 <- dplyr::bind_rows(rocks_all_info_vei_7, new_samples_kurile) 
+
+```
+
+
+
+lets see how many references we have left
+```{r}
+citation_table_after_filtering <- rocks_all_info_vei_7 %>%
+  dplyr::count(References, sort = TRUE) %>%
+  dplyr::rename(`samples nb` = n)
+
+```
+
+
+
+### Step 3 : lets add a column with the eruption date
+
+I found this date while looking through the references. I would find how they call the eruption in the paper and would check on internet what this eruption was about. For example, if in the paper i found "minoan eruption (for santorini)", i would search what this was about, if this eruption was of vei 7 intensity
+
+
+```{r}
+rocks_all_info_vei_7$`Eruption date` <- NA
+
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  dplyr::mutate(`Eruption date` = dplyr::case_when(
+    CITATION_ID == 10931   ~ "4350 BCE",    #akahoya eruption kikai
+    CITATION_ID == 18300  ~ "1600 BCE",    # minoan eruption santorini
+    CITATION_ID == 13469  ~ "1600 BCE",  # minoan eruption santorini
+    CITATION_ID == 13696  ~ "1600 BCE", # minoan eruption santorini
+    CITATION_ID == 3737  ~ "1815", # tambora 
+    CITATION_ID == 4826  ~ "1600 BCE",  # minoan eruption santorini
+    CITATION_ID == 17450  ~ "5750 BCE", # mt mazama climatic eruption
+    CITATION_ID == 18499  ~ "1600 BCE", #plinian eruption santorini
+    CITATION_ID == 20579  ~ "1600 BCE", # kolumbo, santorini
+    CITATION_ID == 4448  ~ "5750 BCE", # mt mazama climatic eruption
+    CITATION_ID == 26169  ~ "1257", # rinjani, mt samalas
+    LOCATION == "Kamchatka / Russia / Kurile Lake" ~ "6440 BCE"
+    
+  ))
+
+
+```
+
+i need to create a column Eruption where i have the name of the eruptions. 
+
+```{r}
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>% 
+  mutate(Eruption = NA)
+
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>% 
+  mutate(Eruption = case_when(
+    `Eruption date` == "1257" ~ "Rinjani 1257",
+    `Eruption date` == "1600 BCE" ~ "Santorini 1600 BCE",
+    `Eruption date` == "1815" ~ "Tambora 1815",
+    `Eruption date` == "4350 BCE" ~ "Kikai 4350 BCE",
+    `Eruption date` == "5750 BCE" ~ "Crater Lake 5750 BCE",
+    `Eruption date` == "6440 BCE" ~ "Kurile Lake 6440 BCE"
+  ))
+```
+
+
+
+nb of samples by eruption
+
+```{r}
+rocks_all_info_vei_7 %>%
+  count(Eruption, name = "nb_samples")
+
+```
+
+
+lets write that csv
+
+
+```{r}
+#write.csv(rocks_all_info_vei_7, "/Users/annad/Documents/NZ Internship/rocks_all_info_vei_7_160725.csv")
+```
+
+
+
+
+
+
+
+
+## Statistics
+
+### alr transformation
+
+```{r}
+
+# list of the oxides that we are using
+oxydes <- c("SIO2(WT%)", "TIO2(WT%)", "AL2O3(WT%)", "CAO(WT%)", "MGO(WT%)",
+            "MNO(WT%)", "K2O(WT%)", "NA2O(WT%)", "P2O5(WT%)", "sum_fe")
+
+
+# oxide reference
+ref_oxyde <- "SIO2(WT%)"
+
+# drop the na
+rocks_alr <- rocks_all_info_vei_7 %>%
+  dplyr::select(all_of(oxydes)) %>%
+  filter(.data[[ref_oxyde]] > 0) %>%
+  drop_na()
+
+# apply the alr transformation
+for (oxyde in oxydes) {
+  if (oxyde != ref_oxyde) {
+    new_col <- paste0("alr_", tolower(gsub("\\(WT%\\)", "", oxyde)))
+    rocks_alr[[new_col]] <- log(rocks_alr[[oxyde]] / rocks_alr[[ref_oxyde]])
+  }
+}
+
+# drop the oxides in the list oxydes
+rocks_alr <- rocks_alr %>%
+  dplyr::select(starts_with("alr_"))
+
+
+```
+
+```{r}
+colnames(rocks_alr)
+```
+
+
+rocks_alr has the alr oxides
+
+
+### Normalization alr data
+
+
+```{r}
+
+
+#oxydes_alr <- c("alr_tio2", "alr_al2o3", "alr_cao",
+              #  "alr_mgo", "alr_mno", "alr_k2o",
+              #  "alr_na2o", "alr_p2o5", "alr_sum_fe")
+
+rocks_alr_scaled <- scale(rocks_alr)
+
+colnames(rocks_alr_scaled)
+#class(rocks_alr_scaled)
+
+```
+
+
+
+lets try to see which type of volcanoes there are 
+
+```{r}
+gvp_holocene_list <- read_csv("/Users/annad/Documents/NZ Internship/unique volcano + eruption/GVP_Volcano_List.csv")
+```
+
+
+
+```{r}
+# Extraire les noms uniques
+noms_vei7 <- unique(rocks_all_info_vei_7$`Volcano Name`)
+noms_gvp  <- unique(gvp_holocene_list$`Volcano Name`)
+
+# Trouver les noms communs
+noms_communs <- intersect(noms_vei7, noms_gvp)
+print(noms_communs)
+
+```
+
+
+```{r}
+
+
+
+
+rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
+  left_join(
+    gvp_holocene_list %>% 
+      dplyr::select(`Volcano Name`, `Primary Volcano Type`, `Dominant Rock Type`, `Country`, `Volcanic Region`, `Latitude`, `Longitude`, `Tectonic Setting`),
+    by = "Volcano Name"
+  )
+
+
+
+```
+
+
+
+
+download for the avo visualisation rmd
+
+```{r}
+#rocks_all_info_vei_7_volcano_rock_type <- write.csv(rocks_all_info_vei_7, "/Users/annad/Documents/NZ Internship/rocks_all_info_vei_7_volcano_rock_type.csv")
+```
+
+
+
+
+for type of volcano
+```{r}
+library(ggplot2)
+
+# Ajouter une colonne VEI fixée à 7 si elle n'existe pas encore
+rocks_all_info_vei_7$VEI <- factor(7, levels = 0:7, ordered = TRUE)
+
+ggplot(rocks_all_info_vei_7, aes(x = VEI, y = `Primary Volcano Type`)) +
+  geom_jitter(height = 0.2, width = 0.1, alpha = 0.6, color = "darkblue", size = 2) +
+  theme_minimal() +
+  labs(
+    title = "Volcano types involved in VEI 7 eruptions",
+    x = "VEI",
+    y = "Volcano Type"
+  ) +
+  theme(axis.text.y = element_text(face = "bold"))
+
+
+
+
+
+#######
+
+eruption_summary_vei7 <- rocks_all_info_vei_7 %>%
+  dplyr::distinct(Eruption, .keep_all = TRUE) %>%
+  dplyr::mutate(VEI = factor(7, levels = 0:7, ordered = TRUE))
+
+
+ggplot(eruption_summary_vei7, aes(x = VEI, y = `Primary Volcano Type`)) +
+  geom_jitter(height = 0.2, width = 0.1, alpha = 0.6, color = "darkblue", size = 2) +
+  theme_minimal() +
+  labs(
+    title = "Volcano types involved in VEI 7 eruptions",
+    x = "VEI",
+    y = "Volcano Type"
+  ) +
+  theme(axis.text.y = element_text(face = "bold"))
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+for the type of rocks
+```{r}
+# Ajouter une colonne VEI fixée à 7 si elle n'existe pas encore
+rocks_all_info_vei_7$VEI <- factor(7, levels = 0:7, ordered = TRUE)
+
+ggplot(rocks_all_info_vei_7, aes(x = VEI, y = `Dominant Rock Type`)) +
+  geom_jitter(height = 0.2, width = 0.1, alpha = 0.6, color = "darkblue", size = 2) +
+  theme_minimal() +
+  labs(
+    title = "Rock types involved in VEI 7 eruptions",
+    x = "VEI",
+    y = "Dominant Rock Type"
+  ) +
+  theme(axis.text.y = element_text(face = "bold"))
+
+
+###########
+
+eruption_summary_vei7_rocks <- rocks_all_info_vei_7 %>%
+  dplyr::distinct(Eruption, `Dominant Rock Type`, .keep_all = TRUE) %>%
+  dplyr::mutate(VEI = factor(7, levels = 0:7, ordered = TRUE))
+
+ggplot(eruption_summary_vei7_rocks, aes(x = VEI, y = `Dominant Rock Type`)) +
+  geom_jitter(height = 0.2, width = 0.1, alpha = 0.6, color = "darkblue", size = 2) +
+  theme_minimal() +
+  labs(
+    title = "Rock types involved in VEI 7 eruptions",
+    x = "VEI",
+    y = "Dominant Rock Type"
+  ) +
+  theme(axis.text.y = element_text(face = "bold"))
+
+
+```
+
+
+for geographical situation
+
+```{r}
+# coordinates
+
+eruption_summary_vei7_coords <- rocks_all_info_vei_7 %>%
+  dplyr::distinct(Eruption, Latitude, Longitude, .keep_all = TRUE) %>%
+  dplyr::mutate(VEI = factor(7, levels = 1:7, ordered = TRUE))
+
+ggplot(eruption_summary_vei7_coords, aes(x = Longitude, y = Latitude)) +
+  geom_point(color = "darkred", size = 3, alpha = 0.7) +
+  theme_minimal() +
+  labs(
+    title = "Geographic distribution of VEI 7 eruptions",
+    x = "Longitude",
+    y = "Latitude"
+  )
+
+
+
+```
+
+map
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(maps)
+library(ggrepel)  # pour éviter les chevauchements
+
+world_map <- map_data("world")
+
+eruption_summary_vei7_coords <- rocks_all_info_vei_7 %>%
+  distinct(Eruption, Latitude, Longitude, .keep_all = TRUE)
+
+ggplot() +
+  geom_polygon(data = world_map, aes(x = long, y = lat, group = group),
+               fill = "gray95", color = "gray70") +
+  geom_point(data = eruption_summary_vei7_coords,
+             aes(x = Longitude, y = Latitude),
+             color = "red", size = 2.5, alpha = 0.8) +
+  geom_text_repel(
+    data = eruption_summary_vei7_coords,
+    aes(x = Longitude, y = Latitude, label = Eruption),
+    size = 3,
+    max.overlaps = 10
+  ) +
+  coord_fixed(1.3) +
+  theme_minimal() +
+  labs(
+    title = "Geographic distribution of VEI 7 eruptions",
+    x = "Longitude",
+    y = "Latitude"
+  )
+
+
+```
+
+
+
+
+
+
+
+for country
+
+```{r}
+eruption_summary_vei7_country <- rocks_all_info_vei_7 %>%
+  dplyr::distinct(Eruption, Country, .keep_all = TRUE)
+
+ggplot(eruption_summary_vei7_country, aes(x = fct_infreq(Country))) +
+  geom_bar(fill = "steelblue") +
+  theme_minimal() +
+  coord_flip() +
+  labs(
+    title = "VEI 7 eruptions by country",
+    x = "Country",
+    y = "Number of eruptions"
+  )
+
+```
+
+for volcanic region
+
+```{r}
+eruption_summary_vei7_region <- rocks_all_info_vei_7 %>%
+  dplyr::distinct(Eruption, `Volcanic Region`, .keep_all = TRUE)
+
+ggplot(eruption_summary_vei7_region, aes(x = fct_infreq(`Volcanic Region`))) +
+  geom_bar(fill = "darkgreen") +
+  theme_minimal() +
+  coord_flip() +
+  labs(
+    title = "VEI 7 eruptions by volcanic region",
+    x = "Volcanic Region",
+    y = "Number of eruptions"
+  )
+
+```
+
