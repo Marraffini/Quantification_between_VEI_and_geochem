@@ -35,7 +35,8 @@ avo_filtered <- read_csv("/Users/annad/Documents/NZ Internship/avo_filtered.csv"
 
 
 ```
-
+here i group vei 0 and 1 together
+i create the column vei_group to not modify the vei column and keep track of which vei was changed
 
 ```{r}
 vei_group_map <- c("0_1" = 1, "2" = 2, "3" = 3, "4" = 4, "5" = 5, "6" = 6)
@@ -59,13 +60,14 @@ how many eruption by vei
 
 ```{r}
 
-# 1. Résumer le nombre d’éruptions par VEI
+# here histogram before mixing vei 0 and 1 together
+
 vei_counts <- avo_filtered %>%
   dplyr::filter(!is.na(Eruption), !is.na(VEI)) %>%
-  dplyr::distinct(Eruption, VEI) %>%   # on compte une seule fois chaque éruption
+  dplyr::distinct(Eruption, VEI) %>%   
   count(VEI, name = "n_eruptions")
 
-# 2. Histogramme
+
 ggplot(vei_counts, aes(x = as.factor(VEI), y = n_eruptions)) +
   geom_col(fill = "steelblue") +
   labs(
@@ -76,15 +78,13 @@ ggplot(vei_counts, aes(x = as.factor(VEI), y = n_eruptions)) +
   theme_minimal()
 
 
-## with the mixed vei class
+# here histogram after mixing vei 0 and 1 together
 
-# 1. Résumer le nombre d’éruptions par VEI
 vei_counts2 <- avo_filtered %>%
   dplyr::filter(!is.na(Eruption), !is.na(VEI_group)) %>%
   dplyr::distinct(Eruption, VEI_group) %>%   # on compte une seule fois chaque éruption
   count(VEI_group, name = "n_eruptions")
 
-# 2. Histogramme
 ggplot(vei_counts2, aes(x = as.factor(VEI_group), y = n_eruptions)) +
   geom_col(fill = "steelblue") +
   labs(
@@ -105,19 +105,12 @@ update : we keep the vei, but we rename it like "old vei" and create after that 
 avo_filtered_2 <- avo_filtered
 avo_filtered_2 <- as.data.frame(avo_filtered_2)
   
+# i just want to keep traces
 ```
+
+
 
 lets add a numeric value to the 0_1 vei class 
-
-```{r, eval=FALSE}
-#vei_group_map <- c("0_1_2" = 2, "3" = 3, "4" = 4, "5" = 5, "6" = 6)
-
-#avo_filtered_2$VEI_numeric <- vei_group_map[avo_filtered_2$VEI_group]
-
-#colnames(avo_filtered_2)
-
-#why it doesnt wooork ????????
-```
 
 lets rename the column vei and add a new one
 
@@ -127,7 +120,7 @@ avo_filtered_2 <- avo_filtered_2 %>%
 
 avo_filtered_2$New_Vei <- avo_filtered_2$Old_Vei
 
-# replace 0 and 1 by 2
+# "replace" 0 and 1 by 1
 
 avo_filtered_2$New_Vei[avo_filtered_2$New_Vei %in% c(0, 1)] <- 1
   
@@ -149,14 +142,12 @@ ref_oxyde <- "SiO2"
 
 # alr and drop the non alr columns
 avo_alr <- avo_filtered_2 %>%
-  # Vérifie que la référence est non manquante et positive
   dplyr::filter(!is.na(.data[[ref_oxyde]]), .data[[ref_oxyde]] > 0) %>%
   mutate(across(
     all_of(setdiff(oxydes, ref_oxyde)),
     ~ log(.x / .data[[ref_oxyde]]),
     .names = "alr_{.col}"
   )) %>%
-  # Supprime les colonnes d'oxydes d'origine
   dplyr::select(-all_of(oxydes))
 
 
@@ -164,6 +155,8 @@ avo_alr <- avo_filtered_2 %>%
 
 
 avo_alr is the df containing the alr oxides.
+
+
 
 # CUBE ROOT SD
 ## === STEP 1: Eruption-level summary ===
@@ -217,23 +210,6 @@ eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
 
 we standardize the oxides.
 
-```{r, eval=FALSE}
-# 1. Identifier les colonnes ALR
-alr_cols <- grep("^alr_", colnames(avo_alr), value = TRUE)
-
-# 2. Standardiser les colonnes ALR et supprimer les originales
-avo_alr_scaled <- avo_alr %>%
-  mutate(across(
-    all_of(alr_cols),
-    ~ scale(.)[, 1],
-    .names = "{.col}_z" # new name to know its the standardized values
-  )) %>%
-  # 3. Supprimer les colonnes ALR brutes
-  dplyr::select(-all_of(alr_cols))
-
-
-```
-
 ```{r}
 eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
   mutate(across(
@@ -246,61 +222,7 @@ eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
 
 
 
-
-
-
-
-
-
-## === STEP 2: Stratified splitting by eruption VEI ===
-```{r, eval=FALSE}
-
-all_splits_summary <- list() # i create a list to store all the splits that i will later decide which goes to train or test
-
-for (rep in 1:rep_count) {
-  
-  # Assign each eruption to one of the 3 folds, stratified by VEI
-  eruptions_split <- eruption_summary_oxides_vei_volcano %>% 
-    group_by(New_Vei) %>%                                    # eruptions with the same VEI are split evenly across folds.
-    mutate(k = sample(rep(k_vals, length.out = n()))) %>%    # shuffles the fold assignments randomly.
-    ungroup()
-  
-  folds_to_run <- if (do_all_folds) k_vals else k_test 
-  # If do_all_folds = TRUE, perform cross-validation: test each fold in turn.
-  # If do_all_folds = FALSE, use the fold number k_test for testing and the rest for training.
-  
-  for (k_sel in folds_to_run) {  # test fold 1, 2, or 3 — or all of them if cross-validation is active.
-    
-    test_set <- eruptions_split %>%   # extract only the eruptions assigned to fold k_sel (e.g. fold 1).
-      dplyr::filter(k == k_sel) %>%
-      dplyr::select(-k) # Then remove the k column (not needed for modeling).
-    
-    train_set <- eruptions_split %>%  # take all other eruption (not in k_fold) to use in the train set
-      dplyr::filter(k != k_sel) %>%
-      dplyr::select(-k)
-    
-    all_splits_summary[[length(all_splits_summary) + 1]] <- list(
-      rep = rep,
-      fold = k_sel,
-      train = train_set,
-      test  = test_set
-    )
-  }
-}
-
-#it stores this split into the list all_splits_summary as a list containing:
-# - the rep number (e.g., 1)
-# - the fold number used as test
-# - the train set
-# - the test set
-
-
-
-```
-
-
-
-## === STEP 3: Prepare all 200 train/test splits ===
+## === STEP 2: Prepare all 200 train/test splits (Stratified splitting by eruption VEI) ===
 ```{r}
 all_splits_summary <- list()
 
@@ -345,7 +267,7 @@ for (rep in 1:rep_count) {
 
 
 
-FUNCTIONS TO CALCULATE COST FUNCTIONS AND WEIGHTED ACCURACY
+# FUNCTIONS TO CALCULATE COST FUNCTIONS AND WEIGHTED ACCURACY
 
 
 ```{r}
@@ -406,11 +328,9 @@ X_mean_sd_cols <- grep("_mean_plus_sd$", names(train), value = TRUE)
 ```
 
 
-lda
+lda (this doesnt work the first time i run it, i have to rerun the previous chunk for it to work, idk why)
 
 ```{r}
-
-######### you can delete this if you only do one split and one fold ########
 
 results_lda <- list()
 
@@ -418,9 +338,10 @@ for (split in all_splits_summary) {
   train <- split$train
   test  <- split$test
 
+
+# code above is to delete if only using one split/one fold (same for other models)  
   
-##############  
-  
+    
   # Build the LDA formula using all selected features
   lda_formula <- as.formula(paste("New_Vei ~", paste(X_mean_sd_cols, collapse = " + ")))
 
@@ -479,9 +400,8 @@ mean(results_lda_df$Weighted_Accuracy) #0.4130492
 
 ```{r}
 
-## to delete if using only one split and fold
 
-results_nb <- list()  # liste pour stocker tous les résultats
+results_nb <- list()  
 
 for (split in all_splits_summary) {
   train <- split$train
@@ -490,7 +410,6 @@ for (split in all_splits_summary) {
   train$New_Vei <- as.factor(train$New_Vei)
   test$New_Vei  <- as.factor(test$New_Vei)
   
-################  
 
 # Build the Naive Bayes formula
 nb_formula <- as.formula(paste("New_Vei ~", paste(X_mean_sd_cols, collapse = " + ")))
@@ -542,9 +461,8 @@ mean(results_nb_df$Weighted_Accuracy) # 0.4174349
 RF
 
 ```{r}
-## to delete if using only one split and fold
 
-results_rf <- list()  # liste pour stocker tous les résultats
+results_rf <- list()  
 
 for (split in all_splits_summary) {
   train <- split$train
@@ -553,6 +471,10 @@ for (split in all_splits_summary) {
   train$New_Vei <- as.factor(train$New_Vei)
   test$New_Vei  <- as.factor(test$New_Vei)
 
+  
+  
+  
+  
 
 # 1. Build formula using previously defined X_mean_cols
 rf_formula <- as.formula(paste("New_Vei ~", paste(X_mean_sd_cols, collapse = " + ")))
@@ -704,7 +626,7 @@ mean(results_svm_df$Weighted_Accuracy) #0.3348889
 vei needs to be ordered
 
 
-ORF
+ORF (works but takes too long, idk why ????)
 
 ```{r}
 results_orf <- list()  # List to store all ORF results
@@ -858,7 +780,7 @@ mean(results_polr_df$Weighted_Accuracy) # 0.3826531
 
 
 ```{r}
-# Liste contenant les résultats par modèle
+# list with the results by model
 results_list <- list(
   lda = results_lda_df,
   nb = results_nb_df,
@@ -868,20 +790,18 @@ results_list <- list(
  polr = results_polr_df
 )
 
-# Moyenne des colonnes numériques pour chaque modèle
+# mean of the numeric columns for each model
 results_mean_sd <- lapply(results_list, function(df) {
   num_cols <- sapply(df, is.numeric) # only apply to the numeric columns
   colMeans(df[, num_cols], na.rm = TRUE)
 })  
 
-# Affiche le résumé
 print(results_mean_sd)
 
 ```
 
 
 ```{r}
-# Supprimer Rep et Fold et prendre la moyenne des colonnes numériques
 results_mean_sd_df <- lapply(results_list, function(df) {
   df_num <- df[, !(names(df) %in% c("Rep", "Fold"))]
   colMeans(df_num, na.rm = TRUE)
@@ -889,33 +809,41 @@ results_mean_sd_df <- lapply(results_list, function(df) {
   do.call(rbind, .) %>%
   as.data.frame()
 
-# Ajouter le nom des modèles comme colonne
+# add the name of the models as columns
 results_mean_sd_df$model <- rownames(results_mean_sd_df)
 rownames(results_mean_sd_df) <- NULL
 
-# Réordonner les colonnes (optionnel)
 results_mean_sd_df <- results_mean_sd_df[, c("model", "C_absolute", "C_squared", "C_asymmetric", "Weighted_Accuracy")]
 
-# Afficher le tableau
 print(results_mean_sd_df)
 
 ```
 
+
+
+visual graph of the table above
+
+
+
+only with nb and rf
 ```{r}
-# 1. Filtrer les données avec New_Vei connu
+# filter the data with New_Vei
 df_true <- eruption_summary_oxides_vei_volcano %>%
   dplyr::filter(New_Vei %in% 1:6) %>%
   dplyr::select(Eruption, New_Vei, all_of(X_mean_sd_cols)) %>%
   mutate(Expected_VEI = New_Vei)  # pour clarté
 
-# 2. Supprimer les NA sur les colonnes explicatives
+# delete nas
 df_true <- df_true[complete.cases(df_true[, X_mean_sd_cols]), ]
 
-# 3. Prédire avec Naive Bayes entraîné sur AVO
+
+
+
+# predict with NB on avo
 X_nb <- df_true[, X_mean_sd_cols]
 pred_nb <- predict(nb_model, newdata = X_nb)
 
-# 4. Créer le data.frame résultat
+# create df from results
 df_nb_pred <- df_true %>%
   dplyr::select(Eruption, Expected_VEI) %>%
   mutate(
@@ -923,12 +851,14 @@ df_nb_pred <- df_true %>%
     Model = "Naive Bayes"
   )
 
-pred_rf <- predict(rf_model, data = X_nb)  # Même X car même base
+
+
+
+# predict rf on avo
+pred_rf <- predict(rf_model, data = X_nb)  # same X bc same base
  # probability matrix: n rows x d class columns
 pred_vei_rf <- as.data.frame(pred_rf[["predictions"]])
 pred_vei_rf$pred_vei <- names(pred_vei_rf)[max.col(pred_vei_rf)]
-
-
 
 df_rf_pred <- df_true %>%
   dplyr::select(Eruption, Expected_VEI) %>%
@@ -936,6 +866,7 @@ df_rf_pred <- df_true %>%
     Predicted_VEI = pred_vei_rf$pred_vei,
     Model = "Random Forest"
   )
+
 
 
 df_all_preds <- bind_rows(df_nb_pred, df_rf_pred)
@@ -961,10 +892,144 @@ ggplot(df_all_preds, aes(x = Expected_VEI, y = Predicted_VEI, color = Model)) +
 
 
 
-
 ```
 
 
+all models
+```{r}
+# filter the data with New_Vei
+df_true <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:6) %>%
+  dplyr::select(Eruption, New_Vei, all_of(X_mean_sd_cols)) %>%
+  mutate(Expected_VEI = New_Vei)  # pour clarté
+
+# delete nas
+df_true <- df_true[complete.cases(df_true[, X_mean_sd_cols]), ]
+
+
+# predict lda
+pred_lda <- predict(lda_model, newdata = X_nb)$class
+
+df_lda_pred <- df_true %>%
+  dplyr::select(Eruption, Expected_VEI) %>%
+  mutate(
+    Predicted_VEI = pred_lda,
+    Model = "LDA"
+  )
+
+# predict with NB on avo
+X_nb <- df_true[, X_mean_sd_cols]
+pred_nb <- predict(nb_model, newdata = X_nb)
+
+# create df from results
+df_nb_pred <- df_true %>%
+  dplyr::select(Eruption, Expected_VEI) %>%
+  mutate(
+    Predicted_VEI = pred_nb,
+    Model = "Naive Bayes"
+  )
+
+
+
+
+# predict rf on avo
+pred_rf <- predict(rf_model, data = X_nb)  # same X bc same base
+ # probability matrix: n rows x d class columns
+pred_vei_rf <- as.data.frame(pred_rf[["predictions"]])
+pred_vei_rf$pred_vei <- names(pred_vei_rf)[max.col(pred_vei_rf)]
+
+df_rf_pred <- df_true %>%
+  dplyr::select(Eruption, Expected_VEI) %>%
+  mutate(
+    Predicted_VEI = pred_vei_rf$pred_vei,
+    Model = "Random Forest"
+  )
+
+
+
+# predict svm
+pred_svm <- predict(svm_model, newdata = X_nb)
+
+df_svm_pred <- df_true %>%
+  dplyr::select(Eruption, Expected_VEI) %>%
+  mutate(
+    Predicted_VEI = pred_svm,
+    Model = "SVM"
+  )
+
+
+
+
+
+# predict polr
+pred_polr <- predict(polr_model, newdata = X_nb)
+
+df_polr_pred <- df_true %>%
+  dplyr::select(Eruption, Expected_VEI) %>%
+  mutate(
+    Predicted_VEI = pred_polr,
+    Model = "POLR"
+  )
+
+
+# predict orf
+pred_orf <- predict(orf_model, newdata = X_nb)
+
+df_orf_pred <- df_true %>%
+  dplyr::select(Eruption, Expected_VEI) %>%
+  mutate(
+    Predicted_VEI = pred_orf$ypred,  # orf prediction vector
+    Model = "ORF"
+  )
+
+
+library(ggplot2)
+
+# Combine all predictions
+df_all_preds <- bind_rows(
+  df_nb_pred,
+  df_rf_pred,
+  df_lda_pred,
+  df_svm_pred,
+  df_polr_pred,
+  df_orf_pred
+)
+
+vei_levels <- as.character(0:7)
+
+df_all_preds <- df_all_preds %>%
+  mutate(
+    Expected_VEI = factor(Expected_VEI, levels = vei_levels, ordered = TRUE),
+    Predicted_VEI = factor(Predicted_VEI, levels = vei_levels, ordered = TRUE)
+  )
+
+model_colors <- c(
+  "Naive Bayes"   = "steelblue",
+  "Random Forest" = "darkorange",
+  "LDA"           = "darkgreen",
+  "SVM"           = "purple",
+  "POLR"          = "pink",
+  "ORF"           = "darkred"
+)
+
+# Graphique
+ggplot(df_all_preds, aes(x = Expected_VEI, y = Predicted_VEI, color = Model)) +
+  geom_jitter(width = 0.2, height = 0.2, size = 3.5, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  theme_minimal() +
+  labs(
+    title = "Expected vs Predicted VEI (AVO)",
+    x = "Expected VEI",
+    y = "Predicted VEI"
+  ) +
+  scale_color_manual(values = model_colors) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_discrete(drop = FALSE) +
+  theme(axis.text = element_text(face = "bold"))
+
+```
+
+this doesnt seem to be very readable ?
 
 
 
@@ -972,6 +1037,8 @@ ggplot(df_all_preds, aes(x = Expected_VEI, y = Predicted_VEI, color = Model)) +
 
 
 
+
+lets add the vei 7 eruptions
 
 
 ```{r}
@@ -986,19 +1053,17 @@ rocks_all_info_vei_7 <- rocks_all_info_vei_7 %>%
 ```
 
 
-i want to use the vei 7 eruptions as test ??
+i want to use the vei 7 eruptions as test
 
 if a VEI 7 eruption happens, could the model recognize how extreme it is?
 VEI 7s are rare, so i want to evaluate performance on unseen extreme cases
 
-how to join the two databases together 
 
 
 ```{r}
-# Clé de correspondance
 library(dplyr)
 
-# 1. Table de correspondance entre avo_filtered (nom = key) et rocks_all_info (valeur = value)
+# between avo_filtered (nom = key) and rocks_all_info (valeur = value)
 
 # left = avo       right = vei 7
 col_mapping <- c(
@@ -1026,10 +1091,10 @@ col_mapping <- c(
 
 
 
-# Appliquer le renommage
+# Apply rename
 vei7_eruptions <- rocks_all_info_vei_7 %>%
   rename(all_of(col_mapping)) %>%
-  dplyr::select(names(col_mapping))  # garde juste les colonnes renommées
+  dplyr::select(names(col_mapping))  # keep only the renamed columns
 
 
 
@@ -1057,7 +1122,6 @@ vei7_eruptions_alr <- vei7_eruptions %>%
     ~ log(.x / .data[[ref_oxyde]]),
     .names = "alr_{.col}"
   )) %>%
-  # Supprime les colonnes d'oxydes d'origine
   dplyr::select(-all_of(oxydes))
 
 
@@ -1084,10 +1148,8 @@ eruption_summary_vei7_stats <- vei7_eruptions_alr %>%
 we standardize the oxides.
 
 ```{r}
-# 1. Identifier les colonnes ALR
 vei7_eruptions_cols <- grep("^alr_", colnames(eruption_summary_vei7_stats), value = TRUE)
 
-# 2. Standardiser les colonnes ALR et supprimer les originales
 eruption_summary_vei7_stats <- eruption_summary_vei7_stats %>%
   mutate(across(
     ends_with("_mean_plus_sd"),
@@ -1102,12 +1164,11 @@ eruption_summary_vei7_stats <- eruption_summary_vei7_stats %>%
 
 # no vei 7 eruptions in the training set
 
-nb
+# nb (no vei 7 in training set)
 
 ```{r}
 library(e1071)
 
-# Préparer les données
 train_nb <- eruption_summary_oxides_vei_volcano %>%
   dplyr::filter(New_Vei %in% 1:6) %>%
   mutate(New_Vei = as.factor(New_Vei))
@@ -1115,23 +1176,23 @@ train_nb <- eruption_summary_oxides_vei_volcano %>%
 X_nb <- train_nb[, X_mean_sd_cols]
 y_nb <- train_nb$New_Vei
 
-# Supprimer NA
+# delete na
 complete_idx <- complete.cases(X_nb)
 X_nb <- X_nb[complete_idx, ]
 y_nb <- y_nb[complete_idx]
 
-# Fusionner pour NaiveBayes (car il prend une formule)
+# nb has a formula so i need to put it together
 train_nb_final <- cbind(New_Vei = y_nb, X_nb)
 
-# Entraînement
+# training
 model_nb <- naiveBayes(New_Vei ~ ., data = train_nb_final)
 
-# Prédictions
+# predictions
 new_X_nb <- eruption_summary_vei7_stats[, X_mean_sd_cols]
 probs_vei7_nb <- predict(model_nb, newdata = new_X_nb, type = "raw")
 pred_classes_vei7_nb <- predict(model_nb, newdata = new_X_nb, type = "class")
 
-# Résultats
+# results
 result_vei7_nb <- cbind(
   Eruption = eruption_summary_vei7_stats$Eruption,
   Predicted_Class = pred_classes_vei7_nb,
@@ -1142,21 +1203,18 @@ print(result_vei7_nb)
 
 ```
 
-lets see with rf -> yes
+# RF (no vei 7 in training set)
 
 ```{r}
 library(randomForest)
 
-# Préparer les données
 train_rf <- eruption_summary_oxides_vei_volcano %>%
   dplyr::filter(New_Vei %in% 1:6) %>%
-  mutate(New_Vei = as.factor(New_Vei))  # RF = classification standard
+  mutate(New_Vei = as.factor(New_Vei))  
 
-# Sélectionner les colonnes
 X_rf <- train_rf[, X_mean_sd_cols]
 y_rf <- train_rf$New_Vei
 
-# Entraînement du modèle
 model_rf <- randomForest(
   x = X_rf,
   y = y_rf,
@@ -1164,11 +1222,11 @@ model_rf <- randomForest(
   importance = TRUE
 )
 
-# Prédiction
+
 probs_vei7_rf <- predict(model_rf, newdata = eruption_summary_vei7_stats[, X_mean_sd_cols], type = "prob")
 pred_classes_vei7_rf <- predict(model_rf, newdata = eruption_summary_vei7_stats[, X_mean_sd_cols], type = "response")
 
-# Résultats
+
 result_vei7_rf <- cbind(
   Eruption = eruption_summary_vei7_stats$Eruption,
   Predicted_Class = pred_classes_vei7_rf,
@@ -1179,11 +1237,15 @@ result_vei7_rf <- cbind(
 print(result_vei7_rf)
 ```
 
+
+# graph for rf and nb (no vei 7 in training set)
+
 ```{r graphique }
 library(dplyr)
 library(ggplot2)
 
-# DataFrames bien formatés
+
+# nb
 df_nb <- data.frame(
   Eruption = eruption_summary_vei7_stats$Eruption,
   Predicted_VEI = pred_classes_vei7_nb,
@@ -1191,6 +1253,7 @@ df_nb <- data.frame(
   Model = "Naive Bayes"
 )
 
+# rf
 df_rf <- data.frame(
   Eruption = eruption_summary_vei7_stats$Eruption,
   Predicted_VEI = pred_classes_vei7_rf,
@@ -1198,16 +1261,18 @@ df_rf <- data.frame(
   Model = "Random Forest"
 )
 
-# Ordre logique des VEI
+# ordered vei
 vei_levels <- as.character(0:7)
 df_nb$Predicted_VEI <- factor(df_nb$Predicted_VEI, levels = vei_levels, ordered = TRUE)
 df_rf$Predicted_VEI <- factor(df_rf$Predicted_VEI, levels = vei_levels, ordered = TRUE)
 
-# Fusion
+# mix
 df_all <- bind_rows(df_nb, df_rf)
 df_all$Eruption <- factor(df_all$Eruption, levels = unique(df_all$Eruption))
 
-# Tracé
+
+
+
 ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
   geom_point(size = 4, alpha = 0.8, position = position_dodge(width = 0.5)) +
   theme_minimal() +
@@ -1231,7 +1296,7 @@ ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
 
 
 
-lets try to add some vei 7 eruptions to the train set
+# lets try to add some vei 7 eruptions to the train set
 
 
 ```{r}
@@ -1241,7 +1306,8 @@ vei7_to_add <- eruption_summary_vei7_stats %>%
 
 ```
 
-new train dataset
+
+# new train dataset
 
 ```{r}
 train_augmented <- eruption_summary_oxides_vei_volcano %>%
@@ -1252,7 +1318,7 @@ train_augmented <- eruption_summary_oxides_vei_volcano %>%
 
 ```
 
-keep other vei 7 for the test
+# keep other vei 7 for the test
 
 ```{r}
 vei7_holdout <- eruption_summary_vei7_stats %>%
@@ -1261,32 +1327,24 @@ vei7_holdout <- eruption_summary_vei7_stats %>%
 
 ```
 
-nb
+# nb (with vei 7 in training set)
 
 ```{r}
 library(e1071)
 
-# Préparer les données pour Naive Bayes
-# (y doit être un facteur, ce que tu fais déjà)
-
-# Supprimer les lignes avec des NA dans les colonnes explicatives
 complete_idx_nb <- complete.cases(train_augmented[, X_mean_sd_cols])
 train_nb <- train_augmented[complete_idx_nb, ]
 
-# Créer un data.frame complet pour l'entraînement
 train_nb_final <- train_nb[, c("New_Vei", X_mean_sd_cols)]
 
-# Entraînement du modèle NB
 model_nb_aug <- naiveBayes(New_Vei ~ ., data = train_nb_final)
 
-# Prédictions sur les VEI 7 non vus
 X_pred_nb <- vei7_holdout[, X_mean_sd_cols]
-X_pred_nb <- X_pred_nb[complete.cases(X_pred_nb), ]  # sécu
+X_pred_nb <- X_pred_nb[complete.cases(X_pred_nb), ]  
 
 probs_nb_aug <- predict(model_nb_aug, newdata = X_pred_nb, type = "raw")
 pred_nb_aug <- predict(model_nb_aug, newdata = X_pred_nb, type = "class")
 
-# Résultats combinés
 result_vei7_nb_aug <- cbind(
   Eruption = vei7_holdout$Eruption[complete.cases(X_pred_nb)],
   Predicted_Class = pred_nb_aug,
@@ -1297,7 +1355,7 @@ print(result_vei7_nb_aug)
 
 ```
 
-rf
+# rf (with vei 7 in training set)
 
 ```{r}
 
@@ -1325,11 +1383,15 @@ result_rf_aug <- cbind(
 print(result_rf_aug)
 
 ```
+
+
+
+# graph for rf and nb ((with vei 7 in training set)
+
 ```{r}
 library(dplyr)
 library(ggplot2)
 
-# Transformer les matrices en data.frames bien nommés
 df_nb <- data.frame(
   Eruption = vei7_holdout$Eruption[complete.cases(X_pred_nb)],
   Predicted_VEI = pred_nb_aug,
@@ -1344,7 +1406,6 @@ df_rf <- data.frame(
   Model = "Random Forest"
 )
 
-# Ajouter la proba max pour chaque prédiction
 df_nb <- df_nb %>%
   rowwise() %>%
   mutate(Max_Prob = max(c_across(where(is.numeric)))) %>%
@@ -1355,17 +1416,14 @@ df_rf <- df_rf %>%
   mutate(Max_Prob = max(c_across(where(is.numeric)))) %>%
   ungroup()
 
-# Forcer l’ordre VEI
 vei_levels <- as.character(0:7)
 df_nb$Predicted_VEI <- factor(df_nb$Predicted_VEI, levels = vei_levels, ordered = TRUE)
 df_rf$Predicted_VEI <- factor(df_rf$Predicted_VEI, levels = vei_levels, ordered = TRUE)
 
-# Fusion
 df_all$Predicted_VEI <- factor(df_all$Predicted_VEI, levels = vei_levels, ordered = TRUE)
 df_all <- bind_rows(df_nb, df_rf)
 df_all$Eruption <- factor(df_all$Eruption, levels = unique(df_all$Eruption))
 
-# Graphique avec label de la proba
 ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
   geom_point(size = 4, alpha = 0.8, position = position_dodge(width = 0.6)) +
   theme_minimal() +
@@ -1374,7 +1432,7 @@ ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
     x = "Eruption",
     y = "Predicted VEI"
   ) +
-  scale_y_discrete(limits = vei_levels) +  # 👈 Forcer l'affichage de tous les VEI
+  scale_y_discrete(limits = vei_levels) + 
   scale_color_manual(values = c("Naive Bayes" = "steelblue", "Random Forest" = "darkorange")) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
@@ -1382,3 +1440,4 @@ ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
 
 ```
 
+finished commenting on 29/07/25
