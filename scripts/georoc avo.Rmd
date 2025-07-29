@@ -148,7 +148,7 @@ ggplot(combined_tas, aes(x = SiO2, y = Total_Alkalis, color = source)) +
 ```
 - could the georock ones but submarine or other types of volcanoes that are inherently different?
 
-idk what to think about this new tas diagram
+idk what to think about this new tas diagram --> see what was said after meeting with Mike
 
 
 ```{r}
@@ -201,7 +201,7 @@ oxide_cols_geo <- c("SIO2(WT%)", "TIO2(WT%)", "AL2O3(WT%)", "CAO(WT%)", "MGO(WT%
                     "K2O(WT%)", "NA2O(WT%)", "P2O5(WT%)")
 oxide_cols_avo <- c("SiO2", "TiO2", "Al2O3", "CaO", "MgO", "MnO",
                     "K2O", "Na2O", "P2O5")
-# Pour correspondre à une seule liste commune
+
 oxide_common_names <- c("SiO2", "TiO2", "Al2O3", "CaO", "MgO", "MnO",
                         "K2O", "Na2O", "P2O5")
 
@@ -286,29 +286,10 @@ samples_per_year <- georoc_eruption_year_known %>%
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# same plots, but individuals bc i can not see
 
 ```{r}
 
-# same plots, but individuals bc i can not see
 # i used geom_point and not jitter and hid outliers from the boxplots
 for (oxide_name in unique(combined_long$Oxide)) {
   plot <- ggplot(combined_long %>% filter(Oxide == oxide_name),
@@ -325,7 +306,7 @@ for (oxide_name in unique(combined_long$Oxide)) {
       legend.position = "bottom"
     )
   
-  print(plot)  # indispensable pour voir le plot dans la boucle
+  print(plot)  
 }
 
 ```
@@ -352,81 +333,6 @@ for (oxide_name in unique(combined_long$Oxide)) {
 }
 
 ```
-
-
-
-
-# georoc known tas diagram
-
-```{r}
-georoc_known <- georoc_eruption_year_known %>%
-  transmute(
-    SiO2 = `SiO2`,
-    Total_Alkalis = `Na2O` + `K2O`,
-    Rock_name = `ROCK NAME`,
-    source = "georoc_eruption_year_known"
-  )
-
-
-
-
-ggplot(georoc_long_known, aes(x = SiO2, y = Total_Alkalis, color = Rock_name)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal() +
-  labs(
-    title = "TAS Diagram : Rock Type of georoc_eruption_year_known",
-    x = "SiO₂ (%)",
-    y = "Na₂O + K₂O (%)",
-    color = "ROCK NAME"
-  )
-```
-
-
-
-
-# georoc unknown tas diagram
-
-```{r}
-georoc_eruption_year_unknown2 <- georoc_eruption_year_unknown %>%
-  transmute(
-    SiO2 = `SiO2`,
-    Total_Alkalis = `Na2O` + `K2O`,
-    Rock_name = `ROCK NAME`,  
-    source = "georoc_eruption_year_unknown"
-  )
-
-
-
-ggplot(georoc_eruption_year_unknown2, aes(x = SiO2, y = Total_Alkalis, color = Rock_name)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal() +
-  labs(
-    title = "TAS Diagram : Rock Type of georoc_eruption_year_unknown",
-    x = "SiO₂ (%)",
-    y = "Na₂O + K₂O (%)",
-    color = "ROCK NAME"
-  )
-```
-
-
-
-
-
-
-
-
-```{r}
-
-```
-
-
-
-
-
-
-
-
-
 
 
 
