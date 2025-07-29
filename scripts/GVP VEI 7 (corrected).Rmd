@@ -751,7 +751,7 @@ rocks_all_info_vei_7 <- dplyr::bind_rows(rocks_all_info_vei_7, new_sample_tambor
 ```
 
 
-only 5 volcanoes left out of 7 (no data for blanco cerro and kurile lake)
+only 5 volcanoes left out of 7 (no data for blanco cerro and kurile lake) -> i could add back kurile lake
 
 update 01/07/25 : actually i find a different article that had samples for kurile lake (i found one for cerro blanco but cant access it)
 
