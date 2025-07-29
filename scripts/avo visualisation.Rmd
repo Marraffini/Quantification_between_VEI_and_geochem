@@ -1,0 +1,677 @@
+---
+title: "avo visualisation"
+output: html_document
+date: "2025-06-15"
+---
+
+
+Description :
+
+Here, we will use avo_filtered.csv (from the rmd avo.rmd) to make some statistics and graphs.
+See how the avo database looks like.
+
+
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(recipes)
+library(caret)
+library(stats)
+library(car)
+library(broom)
+library(MASS)
+library(janitor)
+library(dplyr)
+library(readr)
+library(purrr)
+library(dplyr)
+library(stringr)
+library(palmerpenguins)
+library(ggstatsplot) # violin diagram
+
+```
+
+
+
+```{r}
+
+avo_filtered <- read_csv("/Users/annad/Documents/NZ Internship/avo_filtered.csv", show_col_types = FALSE)
+
+```
+
+# ALR TRANSFORMATION
+
+Let's do the alr transformation, using SIO2 as our reference oxide. 
+
+```{r}
+# oxide list
+oxydes <- c("SiO2", "TiO2", "Al2O3", "FeOT", "MnO", "MgO", "CaO", "Na2O", "K2O", "P2O5")
+
+# oxide reference 
+ref_oxyde <- "SiO2"
+
+# alr and drop the non alr columns
+avo_alr <- avo_filtered %>%
+  dplyr::filter(!is.na(.data[[ref_oxyde]]), .data[[ref_oxyde]] > 0) %>%
+  mutate(across(
+    all_of(setdiff(oxydes, ref_oxyde)),
+    ~ log(.x / .data[[ref_oxyde]]),
+    .names = "alr_{.col}"
+  )) %>%
+  dplyr::select(-all_of(oxydes))
+
+
+```
+
+ 
+lets create a new df where it summarize the data by eruption. 
+
+```{r}
+# select the alr columns
+alr_cols <- grep("^alr_", colnames(avo_alr), value = TRUE)
+
+# summary by eruptions : mean and sd of alr columns
+eruption_summary <- avo_alr %>%
+  group_by(Eruption) %>%
+  summarise(
+    VEI = unique(VEI),  
+    n_samples = n(),
+    across(
+      all_of(alr_cols),
+      list(mean = ~mean(.x, na.rm = TRUE),
+           sd   = ~sd(.x, na.rm = TRUE))
+    ),
+    .groups = "drop"
+  )
+
+```
+
+
+
+we standardize the oxides.
+
+```{r}
+
+# select alr_X_mean and alr_X_sd
+alr_mean_sd_cols <- grep("_(mean|sd)$", colnames(eruption_summary), value = TRUE)
+
+# scale
+eruption_summary <- eruption_summary %>%
+  mutate(across(
+    all_of(alr_mean_sd_cols),
+    ~ scale(.)[, 1],
+    .names = "{.col}_z"
+  ))
+
+
+
+```
+
+
+
+
+
+# GRAPHS
+
+
+## TAS DIAGRAM ON RAW DATA with vei
+
+```{r}
+avo_filtered_long <- avo_filtered %>%
+  transmute(
+    SiO2 = `SiO2`,
+    Total_Alkalis = `Na2O` + `K2O`,
+    VEI = as.factor(VEI),  
+    source = "avo_filtered"
+  )
+
+
+
+ggplot(avo_filtered_long, aes(x = SiO2, y = Total_Alkalis, color = as.factor(VEI))) +
+  geom_point(alpha = 0.5) +
+  theme_minimal() +
+  labs(
+    title = "TAS Diagram : VEI of avo_filtered",
+    x = "SiO₂ (%)",
+    y = "Na₂O + K₂O (%)",
+    color = "VEI"
+  )
+
+```
+
+
+
+
+## TAS DIAGRAM ON RAW DATA with type of rocks
+
+```{r}
+avo_filtered_long <- avo_filtered %>%
+  transmute(
+    SiO2 = `SiO2`,
+    Total_Alkalis = `Na2O` + `K2O`,
+    Rock_Type = as.factor(`Dominant Rock Type`),  
+    source = "avo_filtered"
+  ) %>%
+  drop_na()
+
+ggplot(avo_filtered_long, aes(x = SiO2, y = Total_Alkalis, color = Rock_Type)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal() +
+  labs(
+    title = "TAS Diagram : Dominant Rock Type of avo_filtered",
+    x = "SiO₂ (%)",
+    y = "Na₂O + K₂O (%)",
+    color = "Dominant Rock Type"
+  )
+
+```
+
+
+## TAS DIAGRAM ON RAW DATA with type of volcano
+
+```{r}
+avo_filtered_long2 <- avo_filtered %>%
+  mutate(
+    `Primary Volcano Type` = case_when(
+      `Primary Volcano Type` %in% c("Stratovolcano", "Stratovolcano(es)", "Stratovolcano?") ~ "Stratovolcano",
+      TRUE ~ `Primary Volcano Type`
+    )
+  ) %>%
+  dplyr::filter(
+    !`Primary Volcano Type` %in% c("Maar(s)", "Volcanic field")
+  ) %>%
+  transmute(
+    SiO2 = `SiO2`,
+    Total_Alkalis = `Na2O` + `K2O`,
+    Dominant_rock_type = `Dominant Rock Type`,  
+    Volcano_Type = `Primary Volcano Type`,
+    source = "avo_filtered"
+  ) %>%
+  drop_na()
+
+
+ggplot(avo_filtered_long2, aes(x = SiO2, y = Total_Alkalis, color = Volcano_Type)) +
+  geom_point(alpha = 0.5) +
+  theme_minimal() +
+  labs(
+    title = "TAS Diagram : Primary Volcano Type",
+    x = "SiO₂ (%)",
+    y = "Na₂O + K₂O (%)",
+    color = "Volcano Type"
+  )
+
+
+```
+
+
+
+
+lets add the volcano type to eruption_summary
+
+
+```{r}
+eruption_to_volcano <- avo_filtered %>%
+  dplyr::select(Eruption, Volcano, `Primary Volcano Type`) %>%
+  dplyr::distinct()
+
+
+eruption_summary <- eruption_summary %>%
+  left_join(eruption_to_volcano, by = "Eruption")
+
+```
+
+
+
+
+
+```{r}
+eruption_types <- avo_filtered %>%
+  mutate(`Primary Volcano Type` = case_when(
+    `Primary Volcano Type` %in% c("Stratovolcano", "Stratovolcano(es)", "Stratovolcano?") ~ "Stratovolcano",
+    TRUE ~ `Primary Volcano Type`
+  )) %>%
+  dplyr::select(Eruption, Volcano, `Primary Volcano Type`) %>%
+  dplyr::distinct()
+
+
+```
+
+
+put all the stratovolcanoes variations together 
+
+```{r}
+eruption_summary <- eruption_summary %>%
+  left_join(eruption_types, by = "Eruption")
+
+```
+
+
+```{r}
+ggplot(eruption_summary, aes(x = `Primary Volcano Type`, y = VEI)) +
+  geom_jitter(width = 0.2, alpha = 0.6, color = "firebrick") +
+  theme_minimal() +
+  labs(
+    title = "VEI of eruptions based on the type of volcanoes",
+    x = "Volcano type",
+    y = "VEI"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+
+
+```{r}
+eruption_summary$VEI <- factor(eruption_summary$VEI, levels = 0:6, ordered = TRUE)
+
+ggplot(eruption_summary, aes(x = VEI, y = `Primary Volcano Type`)) +
+  geom_jitter(height = 0.2, width = 0.1, alpha = 0.6, color = "firebrick", size = 2) +
+  theme_minimal() +
+  labs(
+    title = "VEI of eruptions by volcano type",
+    x = "VEI",
+    y = "Volcano Type"
+  ) +
+  theme(axis.text.y = element_text(face = "bold"))
+
+
+```
+
+
+this graph is very good i think ??
+
+
+
+
+lets add the rock type to eruption_summary
+
+
+```{r}
+eruption_to_volcano2 <- avo_filtered %>%
+  dplyr::select(Eruption, Volcano, `Dominant Rock Type`) %>%
+  distinct()
+
+
+eruption_summary <- eruption_summary %>%
+  left_join(eruption_to_volcano2, by = "Eruption")
+
+```
+rock type
+
+```{r}
+eruption_summary$VEI <- factor(eruption_summary$VEI, levels = 0:6, ordered = TRUE)
+
+ggplot(eruption_summary, aes(x = VEI, y = `Dominant Rock Type`)) +
+  geom_jitter(height = 0.2, width = 0.1, alpha = 0.6, color = "firebrick", size = 2) +
+  theme_minimal() +
+  labs(
+    title = "VEI of eruptions by Rock Type",
+    x = "VEI",
+    y = "Rock Type"
+  ) +
+  theme(axis.text.y = element_text(face = "bold"))
+```
+
+
+
+
+
+
+
+
+
+
+lets try with vei 7
+
+```{r}
+rocks_all_info_vei_7_volcano_rock_type = read_csv("/Users/annad/Documents/NZ Internship/rocks_all_info_vei_7_volcano_rock_type.csv")
+
+gvp_holocene_list <- read_csv("/Users/annad/Documents/NZ Internship/unique volcano + eruption/GVP_Volcano_List.csv")
+
+```
+
+
+add the type of volcano (although you can definitely have this column from the gvp list) -> rocks_all_info_vei_7_volcano_rock_type has it
+
+in rocks_all_info_vei_7_volcano_rock_type , rename shield(s) in shield
+
+```{r}
+rocks_all_info_vei_7_volcano_rock_type$`Primary Volcano Type`[
+  rocks_all_info_vei_7_volcano_rock_type$`Primary Volcano Type` == "Shield(s)"
+] <- "Shield"
+
+```
+
+
+
+
+```{r}
+eruption_summary$VEI <- factor(eruption_summary$VEI, levels = 0:7, ordered = TRUE)
+rocks_all_info_vei_7_volcano_rock_type$VEI <- factor(rocks_all_info_vei_7_volcano_rock_type$VEI, levels = 0:7, ordered = TRUE)
+
+
+
+vei7_unique <- rocks_all_info_vei_7_volcano_rock_type %>%
+  group_by(Eruption, `Primary Volcano Type`) %>%  # ou "Eruption date"
+  summarise(VEI = unique(VEI), .groups = "drop")
+
+df_combined <- bind_rows(
+  eruption_summary %>% dplyr::select(VEI, `Primary Volcano Type`),
+  vei7_unique %>% dplyr::select(VEI, `Primary Volcano Type`)
+)
+
+
+
+ggplot(df_combined, aes(x = VEI, y = `Primary Volcano Type`)) +
+  geom_jitter(height = 0.2, width = 0.1, alpha = 0.6, color = "firebrick", size = 2) +
+  theme_minimal() +
+  labs(
+    title = "VEI of eruptions by volcano type (including VEI 7)",
+    x = "VEI",
+    y = "Volcano Type"
+  ) +
+  theme(axis.text.y = element_text(face = "bold"))
+
+```
+
+
+
+
+
+
+
+
+finished commenting on 29/07/25
+
+from this point on (and below), idk what if aything is relevant but i kept it just in case.
+so no need to look at it.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Violin diagram
+
+
+
+```{r}
+# keep only vei + alr columns
+avo_plot_data <- eruption_summary %>%
+  dplyr::select(VEI, starts_with("alr_"))
+
+# long format
+avo_long <- avo_plot_data %>%
+  pivot_longer(
+    cols = -VEI,
+    names_to = "Oxide",
+    values_to = "Value"
+  )
+
+
+# violin diagram
+ggplot(avo_long, aes(x = as.factor(VEI), y = Value, fill = as.factor(VEI))) +
+  geom_violin(trim = FALSE) +
+  facet_wrap(~ Oxide, scales = "free_y") +
+  labs(
+    title = "Distribution des oxydes (ALR + standardisés) en fonction du VEI",
+    x = "Indice VEI",
+    y = "log-ratio standardisé (z-score)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 0, vjust = 0.5),
+    legend.position = "none"
+  )
+
+```
+
+
+
+mean of the oxides by type of rocks
+
+```{r}
+# Liste des oxydes principaux
+oxydes <- c("SiO2", "TiO2", "Al2O3", "FeOT", "MnO", "MgO", "CaO", "Na2O", "K2O", "P2O5")
+
+# Moyennes des oxydes + nombre d'échantillons par type de roche
+rock_summary <- avo_filtered %>%
+  filter(!is.na(`Dominant Rock Type`)) %>%
+  group_by(`Dominant Rock Type`) %>%
+  summarise(
+    n = n(),
+    across(all_of(oxydes), ~ mean(., na.rm = TRUE))
+  ) %>%
+  arrange(desc(n))  # tu peux aussi faire arrange(desc(SiO2)) si tu préfères
+
+# Affichage
+print(rock_summary)
+
+```
+
+
+mean of the oxides by type of volcano
+
+```{r}
+library(dplyr)
+
+# Liste des oxydes principaux
+oxydes <- c("SiO2", "TiO2", "Al2O3", "FeOT", "MnO", "MgO", "CaO", "Na2O", "K2O", "P2O5")
+
+# Moyennes des oxydes + nombre d'échantillons par type de volcan
+volcano_summary <- avo_filtered %>%
+  dplyr::filter(!is.na(`Primary Volcano Type`)) %>%
+  dplyr::filter(!`Primary Volcano Type` %in% c("Maar(s)", "Volcanic Field")) %>%
+  group_by(`Primary Volcano Type`) %>%
+  summarise(
+    n = n(),
+    across(all_of(oxydes), ~ mean(., na.rm = TRUE))
+  ) %>%
+  arrange(desc(n))  # tu peux aussi trier par SiO2 ou autre
+
+# Affichage
+print(volcano_summary)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+CLUSTERS + PCA with mean only (eruptions)
+
+```{r}
+
+
+library(ggplot2)
+library(FactoMineR)
+library(factoextra)
+
+#### Garder uniquement les colonnes *_mean pour le clustering
+eruption_features <- eruption_summary %>%
+  dplyr::select(Eruption, VEI, starts_with("alr_")) %>%
+  dplyr::select(-ends_with("_sd"))  # enlever les sd si présentes
+
+
+
+#### Matrice pour le clustering
+mat_cluster <- eruption_features %>%
+  dplyr::select(-Eruption, -VEI) %>%
+  as.data.frame()
+
+
+#####
+set.seed(123)  # pour reproductibilité
+k <- 2  # par exemple, nombre de clusters à tester
+
+kmeans_res <- kmeans(mat_cluster, centers = k, nstart = 25)
+
+# Ajouter les clusters au dataframe
+eruption_features$cluster <- as.factor(kmeans_res$cluster)
+
+
+
+##### Analyse en composantes principales (PCA)
+pca_res <- prcomp(mat_cluster, scale. = TRUE)
+
+fviz_pca_ind(pca_res,
+             label = "none",
+             habillage = eruption_features$cluster,
+             addEllipses = TRUE,
+             repel = TRUE) +
+  ggtitle("Clusters d’éruptions basés sur la composition chimique (ALR standardisée)")
+
+
+
+######
+
+# mat_cluster = dataframe des variables utilisées dans kmeans
+# kmeans_res   = résultat de kmeans (déjà calculé avec kmeans())
+
+fviz_cluster(kmeans_res,
+             data = mat_cluster,
+             geom = "point",       # ou "text" pour ajouter les noms
+             ellipse.type = "norm",
+             show.clust.cent = FALSE,
+             repel = TRUE,
+             ggtheme = theme_minimal(),
+             main = "K-means clustering (alr)")
+
+```
+
+```{r}
+# 4. Ajouter les numéros de cluster au dataframe
+eruption_clusters <- eruption_features %>%
+  mutate(cluster = as.factor(kmeans_res$cluster)) %>%
+  dplyr::select(Eruption, VEI, cluster)
+
+```
+
+
+clusters + pca with vei
+
+
+```{r}
+# Créer un dataframe avec les coordonnées PCA
+pca_coords <- as.data.frame(pca_res$x)
+pca_coords$Eruption <- eruption_features$Eruption
+pca_coords$VEI <- eruption_features$VEI
+pca_coords$cluster <- eruption_features$cluster  # déjà facteur
+
+# Calcul de la variance expliquée
+var_explained <- (pca_res$sdev^2) / sum(pca_res$sdev^2) * 100
+
+# OPTION 1 : avec noms d’éruption
+ggplot(pca_coords, aes(x = PC1, y = PC2, color = cluster, shape = as.factor(VEI))) +
+  geom_point(size = 3, alpha = 0.9) +
+  geom_text_repel(aes(label = Eruption), size = 3) +
+  labs(
+    title = "Clusters d’éruptions (PCA) avec noms et forme = VEI",
+    x = paste0("PC1 (", round(var_explained[1], 1), "%)"),
+    y = paste0("PC2 (", round(var_explained[2], 1), "%)"),
+    shape = "VEI"
+  ) +
+  theme_minimal()
+
+# OPTION 2 : sans noms d’éruption
+ggplot(pca_coords, aes(x = PC1, y = PC2, color = cluster, shape = as.factor(VEI))) +
+  geom_point(size = 3, alpha = 0.9) +
+  labs(
+    title = "Clusters d’éruptions (PCA) avec forme = VEI",
+    x = paste0("PC1 (", round(var_explained[1], 1), "%)"),
+    y = paste0("PC2 (", round(var_explained[2], 1), "%)"),
+    shape = "VEI"
+  ) +
+  theme_minimal()
+
+
+```
+
+
+what are dim1 and dim2 ? lets find out
+
+
+```{r}
+library(FactoMineR)
+library(factoextra)
+
+# PCA sur les données moyennes (sans Eruption, VEI ni cluster)
+pca_res <- PCA(mat_cluster, scale.unit = TRUE, graph = FALSE)
+
+# Afficher les contributions des variables aux axes
+fviz_contrib(pca_res, choice = "var", axes = 1, top = 10)  # Dim1
+fviz_contrib(pca_res, choice = "var", axes = 2, top = 10)  # Dim2
+
+
+
+# Contributions des variables aux composantes principales
+contrib_matrix <- pca_res$var$contrib
+
+# Afficher les 2 premières dimensions uniquement (Dim1 et Dim2)
+contrib_matrix[, 1:2]
+```
+
+
+
+
+
+
