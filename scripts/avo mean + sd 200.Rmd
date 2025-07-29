@@ -208,7 +208,7 @@ eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
 ```
 
 
-we standardize the oxides.
+## === STEP 2 :we standardize the oxides.
 
 ```{r}
 eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
@@ -222,7 +222,7 @@ eruption_summary_oxides_vei_volcano <- eruption_summary_oxides_vei_volcano %>%
 
 
 
-## === STEP 2: Prepare all 200 train/test splits (Stratified splitting by eruption VEI) ===
+## === STEP 3: Prepare all 200 train/test splits (Stratified splitting by eruption VEI) ===
 ```{r}
 all_splits_summary <- list()
 
