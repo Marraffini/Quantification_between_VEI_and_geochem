@@ -769,7 +769,7 @@ mean(results_polr_df$Weighted_Accuracy) # 0.3826531
 
 
 ```{r}
-# Liste contenant les résultats par modèle
+# list with results per model
 results_list <- list(
   lda = results_lda_df,
   nb = results_nb_df,
@@ -779,13 +779,12 @@ results_list <- list(
   polr = results_polr_df
 )
 
-# Moyenne des colonnes numériques pour chaque modèle
+# mean of the numeric columns for each model
 results_means_sd <- lapply(results_list, function(df) {
   num_cols <- sapply(df, is.numeric) # only apply to the numeric columns
   colMeans(df[, num_cols], na.rm = TRUE)
 })  
 
-# Affiche le résumé
 print(results_means_sd)
 
 ```
@@ -1012,6 +1011,7 @@ ggplot(df_all_preds, aes(x = Expected_VEI, y = Predicted_VEI, color = Model)) +
   scale_y_discrete(drop = FALSE) +
   theme(axis.text = element_text(face = "bold"))
 
+
 ```
 
 
@@ -1136,7 +1136,13 @@ eruption_summary_vei7_cubersd <- eruption_summary_vei7_cubersd %>%
 ```
 
 
+
+
+
 # no vei 7 eruptions in the training set
+
+
+# approach 1
 
 # nb ( no vei 7 eruptions in the training set)
 
@@ -1208,6 +1214,162 @@ result_vei7_rf <- cbind(
 print(result_vei7_rf)
 ```
 
+lda 
+
+```{r}
+library(MASS)
+
+train_lda <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:6) %>%
+  mutate(New_Vei = factor(New_Vei)) %>%  
+  dplyr::select(New_Vei, all_of(X_sd_cols)) %>%
+  na.omit()
+
+model_lda <- lda(New_Vei ~ ., data = train_lda)
+
+new_X_lda <- eruption_summary_vei7_cubersd[, X_sd_cols]
+new_X_lda <- new_X_lda[complete.cases(new_X_lda), ]
+
+pred_lda <- predict(model_lda, newdata = new_X_lda)
+
+result_vei7_lda <- cbind(
+  Eruption = eruption_summary_vei7_cubersd$Eruption[complete.cases(new_X_lda)],
+  Predicted_Class = pred_lda$class,
+  pred_lda$posterior  
+)
+
+print(result_vei7_lda)
+
+```
+
+svm
+
+```{r}
+library(e1071)
+
+train_svm <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:6) %>%
+  mutate(New_Vei = factor(New_Vei)) %>%  
+  dplyr::select(New_Vei, all_of(X_sd_cols)) %>%
+  na.omit()
+
+model_svm <- svm(New_Vei ~ ., data = train_svm, probability = TRUE)
+
+new_X_svm <- eruption_summary_vei7_cubersd[, X_sd_cols]
+new_X_svm <- new_X_svm[complete.cases(new_X_svm), ]
+
+pred_svm <- predict(model_svm, newdata = new_X_svm, probability = TRUE)
+
+probs_svm <- attr(pred_svm, "probabilities")
+
+result_vei7_svm <- cbind(
+  Eruption = eruption_summary_vei7_cubersd$Eruption[complete.cases(new_X_svm)],
+  Predicted_Class = pred_svm,
+  probs_svm
+)
+
+print(result_vei7_svm)
+
+```
+
+
+
+
+
+# approach 2 
+
+polr
+
+```{r}
+library(MASS)
+
+train_polr <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:6) %>%
+  mutate(New_Vei = factor(New_Vei, ordered = TRUE)) %>%
+  dplyr::select(New_Vei, all_of(X_sd_cols)) %>%
+  na.omit()
+
+model_polr <- polr(New_Vei ~ ., data = train_polr, Hess = TRUE)
+
+new_X_polr <- eruption_summary_vei7_cubersd[, X_sd_cols]
+new_X_polr <- new_X_polr[complete.cases(new_X_polr), ]
+
+probs_vei7_polr <- predict(model_polr, newdata = new_X_polr, type = "probs")
+pred_classes_vei7_polr <- predict(model_polr, newdata = new_X_polr, type = "class")
+
+result_vei7_polr <- cbind(
+  Eruption = eruption_summary_vei7_cubersd$Eruption[complete.cases(new_X_polr)],
+  Predicted_Class = pred_classes_vei7_polr,
+  probs_vei7_polr
+)
+
+print(result_vei7_polr)
+
+```
+
+
+orf --> dont work idk why
+
+```{r, eval=FALSE}
+library(ordinalForest)
+
+train_orf <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:6) %>%
+  mutate(New_Vei = factor(New_Vei, ordered = TRUE)) %>% 
+  dplyr::select(New_Vei, all_of(X_sd_cols)) %>%
+  na.omit()
+
+model_orf <- ordfor(
+  depvar = "New_Vei",
+  data = train_orf,
+  nsets = 100,             
+  ntreeperdiv = 50,        
+  ntreefinal = 100,        
+  perffunction = "probability"  
+)
+
+new_X_orf <- eruption_summary_vei7_cubersd[, X_sd_cols]
+complete_rows <- complete.cases(new_X_orf)
+new_X_orf <- new_X_orf[complete_rows, ]
+
+
+pred_orf <- predict(model_orf, newdata = new_X_orf)
+
+result_vei7_orf <- cbind(
+  Eruption = eruption_summary_vei7_cubersd$Eruption[complete_rows],
+  Predicted_Class = pred_orf$classpred,
+  pred_orf$probabilities
+)
+
+print(result_vei7_orf)
+
+```
+
+
+i dont think its possible ??
+```{r, eval=FALSE}
+# list with results per model
+results_list2 <- list(
+  lda = result_vei7_lda,
+  nb = result_vei7_nb,
+  rf = result_vei7_rf,
+  #orf = result_vei7_orf,
+  svm = result_vei7_svm,
+  polr = result_vei7_polr
+)
+
+# mean of the numeric columns for each model
+results_means_sd2 <- lapply(results_list2, function(df) {
+  df <- as.data.frame(df)  
+  num_cols <- sapply(df, is.numeric)
+  colMeans(df[, num_cols, drop = FALSE], na.rm = TRUE)
+})
+
+
+print(results_means_sd2)
+
+```
+
 
 
 
@@ -1237,7 +1399,6 @@ df_all <- bind_rows(dfs)
 
 df_all$Eruption <- factor(df_all$Eruption, levels = unique(df_all$Eruption))
 
-# Tracer
 ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
   geom_point(size = 4, alpha = 0.8, position = position_dodge(width = 0.6)) +
   theme_minimal() +
@@ -1257,6 +1418,63 @@ ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
 
 
 
+all models
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+df_nb <- as.data.frame(result_vei7_nb) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "Naive Bayes")
+
+df_rf <- as.data.frame(result_vei7_rf) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "Random Forest")
+
+df_lda <- as.data.frame(result_vei7_lda) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "LDA")
+
+df_svm <- as.data.frame(result_vei7_svm) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "SVM")
+
+df_polr <- as.data.frame(result_vei7_polr) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "POLR")
+
+dfs <- list(df_nb, df_rf, df_lda, df_svm, df_polr)
+
+dfs <- lapply(dfs, function(df) {
+  df$Predicted_VEI <- factor(df$Predicted_VEI, levels = as.character(1:7))
+  df$Eruption <- as.character(df$Eruption)
+  df
+})
+
+df_all <- bind_rows(dfs)
+df_all$Eruption <- factor(df_all$Eruption, levels = unique(df_all$Eruption))
+
+model_colors <- c(
+  "Naive Bayes" = "steelblue",
+  "Random Forest" = "darkorange",
+  "LDA" = "seagreen",
+  "SVM" = "firebrick",
+  "POLR" = "purple"
+)
+
+ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
+  geom_point(size = 4, alpha = 0.8, position = position_dodge(width = 0.6)) +
+  theme_minimal() +
+  labs(
+    title = "Predicted VEI for VEI 7 Eruptions by Model",
+    x = "Eruption",
+    y = "Predicted VEI"
+  ) +
+  scale_color_manual(values = model_colors) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
 
 
 
@@ -1352,6 +1570,79 @@ result_rf_aug <- cbind(
 print(result_rf_aug)
 
 ```
+lda
+
+```{r}
+library(MASS)
+
+model_lda_aug <- lda(New_Vei ~ ., data = train_augmented[, c("New_Vei", X_sd_cols)])
+
+pred_lda_aug <- predict(model_lda_aug, newdata = vei7_holdout[, X_sd_cols])
+
+result_lda_aug <- cbind(
+  Eruption = vei7_holdout$Eruption,
+  Predicted_Class = pred_lda_aug$class,
+  pred_lda_aug$posterior  
+)
+
+print(result_lda_aug)
+
+```
+
+
+svm
+
+```{r}
+library(e1071)
+
+model_svm_aug <- svm(
+  New_Vei ~ ., 
+  data = train_augmented[, c("New_Vei", X_sd_cols)],
+  probability = TRUE
+)
+
+pred_svm_aug <- predict(model_svm_aug, newdata = vei7_holdout[, X_sd_cols], probability = TRUE)
+probs_svm_aug <- attr(pred_svm_aug, "probabilities")
+
+result_svm_aug <- cbind(
+  Eruption = vei7_holdout$Eruption,
+  Predicted_Class = pred_svm_aug,
+  probs_svm_aug
+)
+
+print(result_svm_aug)
+
+```
+
+
+polr
+
+```{r}
+train_polr_aug <- train_augmented[, c("New_Vei", X_sd_cols)] %>%
+  mutate(New_Vei = factor(New_Vei, ordered = TRUE))
+
+model_polr_aug <- polr(New_Vei ~ ., data = train_polr_aug, Hess = TRUE)
+
+probs_polr_aug <- predict(model_polr_aug, newdata = vei7_holdout[, X_sd_cols], type = "probs")
+pred_polr_aug <- predict(model_polr_aug, newdata = vei7_holdout[, X_sd_cols], type = "class")
+
+
+result_polr_aug <- cbind(
+  Eruption = vei7_holdout$Eruption,
+  Predicted_Class = pred_polr_aug,
+  probs_polr_aug
+)
+
+print(result_polr_aug)
+
+```
+
+
+
+
+
+
+nb and rf
 
 
 ```{r graphique 1}
@@ -1385,7 +1676,7 @@ ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
   geom_point(size = 4, alpha = 0.8, position = position_dodge(width = 0.6)) +
   theme_minimal() +
   labs(
-    title = "Predicted VEI for VEI 7 Eruptions (Augmented Models)",
+    title = "Predicted VEI for VEI 7 Eruptions (with 3 eruptions into training)",
     x = "Eruption",
     y = "Predicted VEI"
   ) +
@@ -1395,6 +1686,83 @@ ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
 
 
 ```
+
+all models
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+df_nb <- data.frame(
+  Eruption = vei7_holdout$Eruption[complete.cases(X_pred_nb)],
+  Predicted_VEI = pred_nb_aug,
+  probs_nb_aug,
+  Model = "Naive Bayes"
+)
+
+df_rf <- data.frame(
+  Eruption = vei7_holdout$Eruption,
+  Predicted_VEI = pred_rf_aug,
+  probs_rf_aug,
+  Model = "Random Forest"
+)
+
+df_lda <- data.frame(
+  Eruption = vei7_holdout$Eruption,
+  Predicted_VEI = pred_lda_aug$class,
+  pred_lda_aug$posterior,
+  Model = "LDA"
+)
+
+df_svm <- data.frame(
+  Eruption = vei7_holdout$Eruption,
+  Predicted_VEI = pred_svm_aug,
+  probs_svm_aug,
+  Model = "SVM"
+)
+
+df_polr <- data.frame(
+  Eruption = vei7_holdout$Eruption,
+  Predicted_VEI = pred_polr_aug,
+  probs_polr_aug,
+  Model = "POLR"
+)
+
+vei_levels <- as.character(1:7)
+
+dfs <- list(df_nb, df_rf, df_lda, df_svm, df_polr)
+
+dfs <- lapply(dfs, function(df) {
+  df$Predicted_VEI <- factor(df$Predicted_VEI, levels = vei_levels, ordered = TRUE)
+  df$Eruption <- as.character(df$Eruption)
+  df
+})
+
+df_all <- bind_rows(dfs)
+
+df_all$Eruption <- factor(df_all$Eruption, levels = unique(df_all$Eruption))
+
+model_colors <- c(
+  "Naive Bayes" = "steelblue",
+  "Random Forest" = "darkorange",
+  "LDA" = "seagreen",
+  "SVM" = "firebrick",
+  "POLR" = "purple"
+)
+
+ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
+  geom_point(size = 4, alpha = 0.8, position = position_dodge(width = 0.6)) +
+  theme_minimal() +
+  labs(
+    title = "Predicted VEI for VEI 7 Eruptions (with 3 eruptions into training)",
+    x = "Eruption",
+    y = "Predicted VEI"
+  ) +
+  scale_color_manual(values = model_colors) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
 
 
 
