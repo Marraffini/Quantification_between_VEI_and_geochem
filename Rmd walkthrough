@@ -1,0 +1,49 @@
+What rmd and bases you need 
+
+AVO :
+
+Need avo.Rmd to have a clean dataset after, that you can work with for the models or anything like that. 
+
+Need the rmd : avo - mean 2
+	 	   - sd 200
+	 	   - mean + sd 200
+
+To have the code with the splitting, alr transformation, scaling, you need to use the rmd above. 
+
+Need the raw AVO_GEOCHEM_21052025.csv database. 
+
+
+GVP :
+
+To have data with only VEI 7, need to use :
+- GVP VEI 7 (corrected).rmd
+
+With the databases : 
+GVP.xlsx
+GVP_Volcano_List.csv
+All six of the [name of rock]_rocks_all_info.csv
+
+
+GEOROC :
+
+You need : 
+For scripts : all the rmd linked to a rock type name (idk if I have to put the rmds here tho ?)
+
+For databases : all_georoc_databases.zip
+
+
+
+
+
+What does the georoc avo.rmd do ?
+
+--> It has some figures comparing the georoc database with the avo one. 
+
+
+
+
+
+
+
+
+
