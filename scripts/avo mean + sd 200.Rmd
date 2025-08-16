@@ -264,6 +264,294 @@ for (rep in 1:rep_count) {
 
 
 
+mean
+
+```{r}
+# --- Packages ---
+# install.packages(c("tidyverse","rstatix","broom","ggplot2")) # if needed
+library(tidyverse)
+library(rstatix)   # Kruskal-Wallis + Dunn post-hoc
+library(broom)     # tidy() for model outputs
+library(ggplot2)
+
+df = eruption_summary_oxides_vei_volcano
+# Ensure VEI is an ordered factor (1 < 2 < ... < 7)
+df <- df %>%
+  mutate(New_Vei = factor(New_Vei, levels = sort(unique(New_Vei)), ordered = TRUE))
+
+# --- 2) Select only scaled mean columns for inter-class comparisons ---
+# e.g., alr_TiO2_mean_scaled, alr_Al2O3_mean_scaled, ...
+feature_cols <- grep("_mean_scaled$", names(df), value = TRUE)
+
+# Safety check: drop features with all-NA (just in case)
+feature_cols <- feature_cols[ colSums(!is.na(df[, feature_cols])) > 0 ]
+
+# --- 3) Non-parametric inter-class tests (robust): Kruskal–Wallis per oxide ---
+kw_results <- map_dfr(
+  feature_cols,
+  ~ df %>% kruskal_test(as.formula(paste(.x, "~ New_Vei"))) %>%
+    mutate(variable = .x) %>%
+    select(variable, statistic, p, df = df)
+) %>%
+  arrange(p) %>%
+  mutate(p_adj_BH = p.adjust(p, method = "BH"))
+
+# View the top results
+print(kw_results)
+
+# Optional: save results
+# write.csv(kw_results, "interclass_kruskal_mean_scaled.csv", row.names = FALSE)
+
+# --- 4) Post-hoc (only for variables with significant KW after BH correction) ---
+sig_vars <- kw_results %>% filter(p_adj_BH < 0.05) %>% pull(variable)
+
+dunn_list <- lapply(sig_vars, function(v) {
+  post <- df %>%
+    dunn_test(as.formula(paste(v, "~ New_Vei")), p.adjust.method = "BH") %>%
+    mutate(variable = v) %>%
+    relocate(variable)
+  post
+})
+
+dunn_results <- if (length(dunn_list)) bind_rows(dunn_list) else tibble()
+print(dunn_results)
+
+# Optional: save post-hoc
+# if (nrow(dunn_results) > 0) write.csv(dunn_results, "posthoc_dunn_mean_scaled.csv", row.names = FALSE)
+
+# --- 5) (Optionnel) ANOVA + eta² (si tu veux une mesure d’effet paramétrique) ---
+# Note: approprié si les hypothèses sont à peu près ok; sinon reste sur KW/Dunn.
+anova_results <- map_dfr(feature_cols, function(v) {
+  f <- as.formula(paste(v, "~ New_Vei"))
+  fit <- aov(f, data = df)
+  a_tab <- anova(fit)
+  if (!"New_Vei" %in% rownames(a_tab)) return(tibble(variable = v, p_value = NA_real_, eta2 = NA_real_))
+  ssb <- a_tab["New_Vei", "Sum Sq"]
+  sst <- sum(a_tab[, "Sum Sq"], na.rm = TRUE)
+  tibble(
+    variable = v,
+    p_value = summary(fit)[[1]][["Pr(>F)"]][1],
+    eta2 = ssb / sst
+  )
+}) %>%
+  arrange(p_value) %>%
+  mutate(p_adj_BH = p.adjust(p_value, method = "BH"))
+
+print(anova_results)
+
+# Optional: save ANOVA
+# write.csv(anova_results, "interclass_anova_mean_scaled.csv", row.names = FALSE)
+
+# --- 6) Visual summaries ---
+
+# 6a) Boxplots (one panel per oxide) on scaled means
+df_long <- df %>%
+  select(New_Vei, all_of(feature_cols)) %>%
+  pivot_longer(cols = all_of(feature_cols), names_to = "oxide", values_to = "value")
+
+ggplot(df_long, aes(x = New_Vei, y = value)) +
+  geom_boxplot(outlier.alpha = 0.5) +
+  facet_wrap(~ oxide, scales = "free_y") +
+  theme_minimal(base_size = 12) +
+  labs(title = "Inter-class variability (scaled means)",
+       x = "VEI class", y = "Scaled mean (ALR)")
+
+# 6b) PCA on scaled means (already scaled -> no re-scaling)
+# Keep only complete cases on selected features
+df_pca <- df %>% select(New_Vei, all_of(feature_cols)) %>% drop_na(all_of(feature_cols))
+
+pca <- prcomp(df_pca %>% select(-New_Vei), center = FALSE, scale. = FALSE)
+scores <- as_tibble(pca$x) %>% mutate(New_Vei = df_pca$New_Vei)
+
+ggplot(scores, aes(PC1, PC2, color = New_Vei)) +
+  geom_point(alpha = 0.8) +
+  stat_ellipse(type = "norm", level = 0.68, linewidth = 0.6) +
+  theme_minimal(base_size = 12) +
+  labs(title = "PCA on scaled means (ALR)",
+       subtitle = "Color = VEI class",
+       x = paste0("PC1 (", round(100*summary(pca)$importance[2,1], 1), "%)"),
+       y = paste0("PC2 (", round(100*summary(pca)$importance[2,2], 1), "%)"))
+
+```
+sd
+
+```{r}
+# --- Packages ---
+# install.packages(c("tidyverse","rstatix","broom","ggplot2")) # if needed
+library(tidyverse)
+library(rstatix)   # Kruskal-Wallis + Dunn post-hoc
+library(broom)     # tidy() for model outputs
+library(ggplot2)
+
+df <- eruption_summary_oxides_vei_volcano
+
+# Ensure VEI is an ordered factor (1 < 2 < ... < 7)
+df <- df %>%
+  mutate(New_Vei = factor(New_Vei, levels = sort(unique(New_Vei)), ordered = TRUE))
+
+# --- 1) Select scaled SD columns for inter-class comparisons ---
+# e.g., alr_TiO2_sd_scaled, alr_Al2O3_sd_scaled, ...
+feature_cols <- grep("_sd_scaled$", names(df), value = TRUE)
+
+# Safety check: drop features with all-NA (just in case)
+feature_cols <- feature_cols[ colSums(!is.na(df[, feature_cols])) > 0 ]
+
+# --- 2) Non-parametric inter-class tests (robust): Kruskal–Wallis per oxide SD ---
+kw_results <- purrr::map_dfr(
+  feature_cols,
+  ~ df %>%
+      kruskal_test(as.formula(paste(.x, "~ New_Vei"))) %>%
+      mutate(variable = .x) %>%
+      dplyr::select(variable, statistic, p, df = df)
+) %>%
+  arrange(p) %>%
+  mutate(p_adj_BH = p.adjust(p, method = "BH"))
+
+print(kw_results)
+# write.csv(kw_results, "interclass_kruskal_sd_scaled.csv", row.names = FALSE)
+
+# --- 3) Post-hoc (only for variables with significant KW after BH correction) ---
+sig_vars <- kw_results %>% filter(p_adj_BH < 0.05) %>% pull(variable)
+
+dunn_list <- lapply(sig_vars, function(v) {
+  df %>%
+    dunn_test(as.formula(paste(v, "~ New_Vei")), p.adjust.method = "BH") %>%
+    mutate(variable = v) %>%
+    relocate(variable)
+})
+
+dunn_results <- if (length(dunn_list)) bind_rows(dunn_list) else tibble()
+print(dunn_results)
+# if (nrow(dunn_results) > 0) write.csv(dunn_results, "posthoc_dunn_sd_scaled.csv", row.names = FALSE)
+
+# --- 4) (Optional) ANOVA + eta² on SDs (parametric effect size) ---
+anova_results <- purrr::map_dfr(feature_cols, function(v) {
+  f <- as.formula(paste(v, "~ New_Vei"))
+  fit <- aov(f, data = df)
+  a_tab <- anova(fit)
+  if (!"New_Vei" %in% rownames(a_tab)) return(tibble(variable = v, p_value = NA_real_, eta2 = NA_real_))
+  ssb <- a_tab["New_Vei", "Sum Sq"]
+  sst <- sum(a_tab[, "Sum Sq"], na.rm = TRUE)
+  tibble(
+    variable = v,
+    p_value  = summary(fit)[[1]][["Pr(>F)"]][1],
+    eta2     = ssb / sst
+  )
+}) %>%
+  arrange(p_value) %>%
+  mutate(p_adj_BH = p.adjust(p_value, method = "BH"))
+
+print(anova_results)
+# write.csv(anova_results, "interclass_anova_sd_scaled.csv", row.names = FALSE)
+
+# --- 5) Visual summaries on SDs ---
+
+# 5a) Boxplots (one panel per oxide SD)
+df_long <- df %>%
+  select(New_Vei, all_of(feature_cols)) %>%
+  pivot_longer(cols = all_of(feature_cols), names_to = "oxide_sd", values_to = "value")
+
+ggplot(df_long, aes(x = New_Vei, y = value)) +
+  geom_boxplot(outlier.alpha = 0.5) +
+  facet_wrap(~ oxide_sd, scales = "free_y") +
+  theme_minimal(base_size = 12) +
+  labs(title = "Inter-class variability of within-eruption SDs (scaled)",
+       x = "VEI class", y = "Scaled SD (ALR)")
+
+# 5b) PCA on scaled SDs (already scaled -> no re-scaling)
+df_pca <- df %>%
+  select(New_Vei, all_of(feature_cols)) %>%
+  drop_na(all_of(feature_cols))
+
+pca <- prcomp(df_pca %>% select(-New_Vei), center = FALSE, scale. = FALSE)
+scores <- as_tibble(pca$x) %>% mutate(New_Vei = df_pca$New_Vei)
+
+ggplot(scores, aes(PC1, PC2, color = New_Vei)) +
+  geom_point(alpha = 0.8) +
+  stat_ellipse(type = "norm", level = 0.68, linewidth = 0.6) +
+  theme_minimal(base_size = 12) +
+  labs(title = "PCA on scaled SDs (ALR)",
+       subtitle = "Color = VEI class",
+       x = paste0("PC1 (", round(100*summary(pca)$importance[2,1], 1), "%)"),
+       y = paste0("PC2 (", round(100*summary(pca)$importance[2,2], 1), "%)"))
+
+```
+
+
+
+
+
+
+```{r}
+library(dplyr)
+
+# Sélection des colonnes mean_scaled
+feature_cols <- grep("_mean_scaled$", names(eruption_summary_oxides_vei_volcano), value = TRUE)
+
+# Résumé par VEI
+summary_table <- eruption_summary_oxides_vei_volcano %>%
+  group_by(New_Vei) %>%
+  summarise(across(all_of(feature_cols),
+                   list(mean = mean, sd = sd),
+                   na.rm = TRUE),
+            .groups = "drop")
+
+summary_table
+
+```
+
+
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+# 1) Select scaled mean columns and run PCA
+feature_cols <- grep("_mean_scaled$", names(eruption_summary_oxides_vei_volcano), value = TRUE)
+
+df_pca <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::select(New_Vei, all_of(feature_cols)) %>%
+  drop_na(all_of(feature_cols))
+
+# PCA on scaled means (already scaled, so no centering/scaling here)
+pca <- prcomp(df_pca %>% select(-New_Vei), center = FALSE, scale. = FALSE)
+
+# Get PCA scores (coordinates of each eruption in PC space)
+scores <- as.data.frame(pca$x) %>%
+  mutate(New_Vei = df_pca$New_Vei)
+
+# 2) Compute the centroid (mean coordinates) for each VEI class
+centers <- scores %>%
+  group_by(New_Vei) %>%
+  summarise(across(PC1:PC2, mean), .groups = "drop")
+
+# 3) Compute pairwise distances between VEI class centroids
+dist_matrix <- as.matrix(dist(centers[, c("PC1", "PC2")]))
+rownames(dist_matrix) <- centers$New_Vei
+colnames(dist_matrix) <- centers$New_Vei
+
+# Print the distance matrix
+dist_matrix
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1029,7 +1317,65 @@ ggplot(df_all_preds, aes(x = Expected_VEI, y = Predicted_VEI, color = Model)) +
 
 ```
 
-this doesnt seem to be very readable ?
+facettes
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# --- Ensure ordered factors ---
+vei_levels <- as.character(1:7)
+df_all_preds <- df_all_preds %>%
+  mutate(
+    Expected_VEI  = factor(Expected_VEI,  levels = vei_levels, ordered = TRUE),
+    Predicted_VEI = factor(Predicted_VEI, levels = vei_levels, ordered = TRUE)
+  )
+
+# --- Colorblind-friendly palette (Okabe–Ito) ---
+model_colors <- c(
+  "NB"   = "#E69F00", # orange
+  "RF" = "#56B4E9", # light blue
+  "LDA"           = "#009E73", # bluish green
+  "SVM"           = "#F0E442", # yellow
+  "POLR"          = "#0072B2", # dark blue
+  "ORF"           = "#D55E00"  # vermillion
+)
+
+# --- Faceted scatter plot with circles + black border ---
+p_facets_circles_border <- ggplot(
+  df_all_preds,
+  aes(x = Expected_VEI, y = Predicted_VEI)
+) +
+  geom_jitter(
+    aes(fill = Model),
+    shape = 21,                  # circle with fill + border
+    color = "black",             # border color
+    width = 0.15, height = 0.15,
+    size = 1.5, alpha = 0.5,
+    stroke = 0.4                 # border thickness
+  ) +
+  geom_abline(
+    slope = 1, intercept = 0,
+    linetype = "dashed", color = "gray50"
+  ) +
+  facet_wrap(~ Model, ncol = 3) +   # one facet per model
+  scale_fill_manual(values = model_colors, drop = FALSE, name = "Models") +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_discrete(drop = FALSE) +
+  labs(
+    title = "Expected vs Predicted VEI (AVO - Mean + Cube Root SD)",
+    x = "Expected VEI", y = "Predicted VEI"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(face = "bold"),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 11)
+  )
+
+p_facets_circles_border
+```
 
 
 
