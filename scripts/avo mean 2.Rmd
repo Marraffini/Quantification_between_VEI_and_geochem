@@ -1008,9 +1008,260 @@ ggplot(df_all_preds, aes(x = Expected_VEI, y = Predicted_VEI, color = Model)) +
 ```
 
 
+same but on two different graphs
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# --- Features: one single matrix for all models ---
+X <- df_true[, X_mean_cols]
+
+# --- Predictions (harmonized on X) ---
+pred_lda  <- predict(lda_model,  newdata = X)$class
+pred_nb   <- predict(nb_model,   newdata = X)
+pred_rf   <- predict(rf_model,   data    = X)
+pred_svm  <- predict(svm_model,  newdata = X)
+pred_polr <- predict(polr_model, newdata = X)
+pred_orf  <- predict(orf_model,  newdata = X)
+
+# For RF: retrieve the winning class
+pred_vei_rf <- as.data.frame(pred_rf[["predictions"]])
+pred_vei_rf$pred_vei <- names(pred_vei_rf)[max.col(pred_vei_rf)]
+
+# --- Build output data frames for each model ---
+df_lda_pred  <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_lda,             Model = "LDA")
+df_nb_pred   <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_nb,              Model = "NB")
+df_rf_pred   <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_vei_rf$pred_vei, Model = "RF")
+df_svm_pred  <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_svm,             Model = "SVM")
+df_polr_pred <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_polr,            Model = "POLR")
+df_orf_pred  <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_orf$ypred,       Model = "ORF")
+
+# --- Combine all predictions into one dataset ---
+df_all_preds <- bind_rows(
+  df_nb_pred, df_rf_pred, df_lda_pred, df_svm_pred, df_polr_pred, df_orf_pred
+)
+
+# --- Ensure VEI factors are ordered and consistent ---
+vei_levels <- as.character(0:7)
+df_all_preds <- df_all_preds %>%
+  mutate(
+    Expected_VEI  = factor(Expected_VEI,  levels = vei_levels, ordered = TRUE),
+    Predicted_VEI = factor(Predicted_VEI, levels = vei_levels, ordered = TRUE)
+  )
+
+# --- Color mapping for each model ---
+model_colors <- c(
+  "Naive Bayes"   = "#009E73",
+  "Random Forest" = "#000000",
+  "LDA"           = "orange",
+  "SVM"           = "purple",
+  "POLR"          = "#009E73",
+  "ORF"           = "orange"
+)
+
+# --- Reusable plotting function with higher transparency ---
+plot_ev <- function(df_sub, title_suffix) {
+  ggplot(df_sub, aes(x = Expected_VEI, y = Predicted_VEI, color = Model)) +
+    geom_jitter(width = 0.18, height = 0.18, size = 3.2, alpha = 0.35) +  # higher transparency for overlaps
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    scale_color_manual(values = model_colors, drop = FALSE) +
+    scale_x_discrete(drop = FALSE) +
+    scale_y_discrete(drop = FALSE) +
+    labs(
+      title = paste("Expected vs Predicted VEI (AVO - Mean) —", title_suffix),
+      x = "Expected VEI", y = "Predicted VEI"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text = element_text(face = "bold"),
+      legend.position = "bottom"
+    )
+}
+
+# --- Split models into two groups ---
+group1 <- c("NB", "RF", "LDA")
+group2 <- c("SVM", "POLR", "ORF")
+
+# --- Create plots for each group ---
+p1 <- df_all_preds %>% filter(Model %in% group1) %>% plot_ev("NB / RF / LDA")
+p2 <- df_all_preds %>% filter(Model %in% group2) %>% plot_ev("SVM / POLR / ORF")
+
+# Display separately
+p1
+p2
+
+# Option: display side by side using patchwork
+# install.packages("patchwork")
+# library(patchwork)
+# p1 | p2
+
+```
 
 
+with forms
 
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# --- Features: one single matrix for all models ---
+X <- df_true[, X_mean_cols]
+
+# --- Predictions (harmonized on X) ---
+pred_lda  <- predict(lda_model,  newdata = X)$class
+pred_nb   <- predict(nb_model,   newdata = X)
+pred_rf   <- predict(rf_model,   data    = X)
+pred_svm  <- predict(svm_model,  newdata = X)
+pred_polr <- predict(polr_model, newdata = X)
+pred_orf  <- predict(orf_model,  newdata = X)
+
+# For RF: retrieve the winning class
+pred_vei_rf <- as.data.frame(pred_rf[["predictions"]])
+pred_vei_rf$pred_vei <- names(pred_vei_rf)[max.col(pred_vei_rf)]
+
+# --- Build output data frames for each model ---
+df_lda_pred  <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_lda,             Model = "LDA")
+df_nb_pred   <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_nb,              Model = "Naive Bayes")
+df_rf_pred   <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_vei_rf$pred_vei, Model = "Random Forest")
+df_svm_pred  <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_svm,             Model = "SVM")
+df_polr_pred <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_polr,            Model = "POLR")
+df_orf_pred  <- df_true %>% select(Eruption, Expected_VEI) %>% mutate(Predicted_VEI = pred_orf$ypred,       Model = "ORF")
+
+# --- Combine all predictions into one dataset ---
+df_all_preds <- bind_rows(
+  df_nb_pred, df_rf_pred, df_lda_pred, df_svm_pred, df_polr_pred, df_orf_pred
+)
+
+# --- Ensure VEI factors are ordered and consistent ---
+vei_levels <- as.character(0:7)
+df_all_preds <- df_all_preds %>%
+  mutate(
+    Expected_VEI  = factor(Expected_VEI,  levels = vei_levels, ordered = TRUE),
+    Predicted_VEI = factor(Predicted_VEI, levels = vei_levels, ordered = TRUE)
+  )
+
+# --- Color mapping for each model (kept your choices) ---
+model_colors <- c(
+  "Naive Bayes"   = "#009E73",
+  "Random Forest" = "#000000",
+  "LDA"           = "orange",
+  "SVM"           = "purple",
+  "POLR"          = "#009E73",
+  "ORF"           = "orange"
+)
+
+# --- Shape mapping for each model (distinct, colorblind-friendly) ---
+# 15 = filled square, 16 = filled circle, 17 = triangle up, 18 = diamond, 7 = triangle down, 8 = star
+model_shapes <- c(
+  "Naive Bayes"   = 16,  # circle
+  "Random Forest" = 17,  # triangle up
+  "LDA"           = 15,  # square
+  "SVM"           = 18,  # diamond
+  "POLR"          = 7,   # triangle down
+  "ORF"           = 8    # star
+)
+
+# --- Reusable plotting function with color + shape legends ---
+plot_ev <- function(df_sub, title_suffix) {
+  ggplot(df_sub, aes(x = Expected_VEI, y = Predicted_VEI, color = Model, shape = Model)) +
+    geom_jitter(width = 0.18, height = 0.18, size = 3.2, alpha = 0.35, stroke = 0.6) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+    scale_color_manual(values = model_colors, drop = FALSE, name = "Models") +
+    scale_shape_manual(values = model_shapes, drop = FALSE, name = "Models") +
+    scale_x_discrete(drop = FALSE) +
+    scale_y_discrete(drop = FALSE) +
+    labs(
+      title = paste("Expected vs Predicted VEI (AVO - Mean) —", title_suffix),
+      x = "Expected VEI", y = "Predicted VEI"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text = element_text(face = "bold"),
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold"),
+      legend.text  = element_text(size = 10)
+    )
+}
+
+# --- Split models into two groups ---
+group1 <- c("Naive Bayes", "Random Forest", "LDA")
+group2 <- c("SVM", "POLR", "ORF")
+
+# --- Create plots for each group ---
+p1 <- df_all_preds %>% filter(Model %in% group1) %>% plot_ev("NB / RF / LDA")
+p2 <- df_all_preds %>% filter(Model %in% group2) %>% plot_ev("SVM / POLR / ORF")
+
+# Display separately
+p1
+p2
+
+# Option: side by side (if you use patchwork)
+# library(patchwork)
+# p1 | p2
+
+```
+
+facettes
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# --- Ensure ordered factors ---
+vei_levels <- as.character(1:7)
+df_all_preds <- df_all_preds %>%
+  mutate(
+    Expected_VEI  = factor(Expected_VEI,  levels = vei_levels, ordered = TRUE),
+    Predicted_VEI = factor(Predicted_VEI, levels = vei_levels, ordered = TRUE)
+  )
+
+# --- Colorblind-friendly palette (Okabe–Ito) ---
+model_colors <- c(
+  "NB"            = "#E69F00", # orange
+  "RF"            = "#56B4E9", # light blue
+  "LDA"           = "#009E73", # bluish green
+  "SVM"           = "#F0E442", # yellow
+  "POLR"          = "#0072B2", # dark blue
+  "ORF"           = "#D55E00"  # vermillion
+)
+
+# --- Faceted scatter plot with circles + black border ---
+p_facets_circles_border <- ggplot(
+  df_all_preds,
+  aes(x = Expected_VEI, y = Predicted_VEI)
+) +
+  geom_jitter(
+    aes(fill = Model),
+    shape = 21,                  # circle with fill + border
+    color = "black",             # border color
+    width = 0.15, height = 0.15,
+    size = 1.5, alpha = 0.5,
+    stroke = 0.4                 # border thickness
+  ) +
+  geom_abline(
+    slope = 1, intercept = 0,
+    linetype = "dashed", color = "gray50"
+  ) +
+  facet_wrap(~ Model, ncol = 3) +   # one facet per model
+  scale_fill_manual(values = model_colors, drop = FALSE, name = "Models") +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_discrete(drop = FALSE) +
+  labs(
+    title = "Expected vs Predicted VEI (AVO - Mean)",
+    x = "Expected VEI", y = "Predicted VEI"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(face = "bold"),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 11)
+  )
+
+p_facets_circles_border
+
+```
 
 
 

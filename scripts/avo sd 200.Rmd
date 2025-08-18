@@ -1015,6 +1015,82 @@ ggplot(df_all_preds, aes(x = Expected_VEI, y = Predicted_VEI, color = Model)) +
 ```
 
 
+facettes
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# --- Ensure ordered factors ---
+vei_levels <- as.character(1:7)
+df_all_preds <- df_all_preds %>%
+  mutate(
+    Expected_VEI  = factor(Expected_VEI,  levels = vei_levels, ordered = TRUE),
+    Predicted_VEI = factor(Predicted_VEI, levels = vei_levels, ordered = TRUE)
+  )
+
+# --- Colorblind-friendly palette (Okabe–Ito) ---
+model_colors <- c(
+  "NB"   = "#E69F00", # orange
+  "RF" = "#56B4E9", # light blue
+  "LDA"           = "#009E73", # bluish green
+  "SVM"           = "#F0E442", # yellow
+  "POLR"          = "#0072B2", # dark blue
+  "ORF"           = "#D55E00"  # vermillion
+)
+
+# --- Faceted scatter plot with circles + black border ---
+p_facets_circles_border <- ggplot(
+  df_all_preds,
+  aes(x = Expected_VEI, y = Predicted_VEI)
+) +
+  geom_jitter(
+    aes(fill = Model),
+    shape = 21,                  # circle with fill + border
+    color = "black",             # border color
+    width = 0.15, height = 0.15,
+    size = 1.5, alpha = 0.5,
+    stroke = 0.4                 # border thickness
+  ) +
+  geom_abline(
+    slope = 1, intercept = 0,
+    linetype = "dashed", color = "gray50"
+  ) +
+  facet_wrap(~ Model, ncol = 3) +   # one facet per model
+  scale_fill_manual(values = model_colors, drop = FALSE, name = "Models") +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_discrete(drop = FALSE) +
+  labs(
+    title = "Expected vs Predicted VEI (AVO - Cube Root SD)",
+    x = "Expected VEI", y = "Predicted VEI"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(face = "bold"),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 11)
+  )
+
+p_facets_circles_border
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 add some vei 7 eruptions into the models
 
 ```{r}
