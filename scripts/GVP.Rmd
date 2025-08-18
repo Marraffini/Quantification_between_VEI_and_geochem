@@ -1,0 +1,328 @@
+---
+title: "gvp"
+output: html_document
+date: "2025-04-23"
+---
+
+
+Description : 
+
+You need the raw cvs from GVP.xlsx.
+
+
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+
+library(readxl)
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(recipes)
+library(caret)
+library(stats)
+library(car)
+library(broom)
+library(MASS)
+
+
+```
+
+
+
+```{r}
+
+file_path = "/Users/annad/Documents/NZ Internship/GVP/GVP.xlsx"
+
+gvp = read_excel(file_path, skip = 1)
+
+```
+
+
+
+We only keep the rows with existent VEI and Confirmed Eruption.
+
+```{r}
+
+GVP = gvp %>%
+  dplyr::filter(`Eruption Category` == "Confirmed Eruption") %>%
+  dplyr::filter(!is.na(VEI))
+
+
+```
+
+
+We don't keep "VEI Modifier", only the "VEI".
+
+
+```{r}
+GVP <- GVP[, !names(GVP) %in% "VEI Modifier"]
+
+
+colnames(GVP)
+```
+
+
+
+# **FIRST ANALYSIS**
+
+
+```{r}
+
+length(unique(GVP$`Volcano Number`)) # --> 694
+length(unique(GVP$`Volcano Name`)) # --> 679
+
+# have more volcano num than names
+
+```
+
+
+Let's find why. 
+
+After looking at the GVP base, I saw there were "Unknown", "Unnamed" and "FALSE" volcanoes.
+
+```{r}
+
+sum(GVP$`Volcano Name` == "Unknown Source", na.rm = TRUE) # --> 1
+sum(GVP$`Volcano Name` == "Unnamed", na.rm = TRUE) # --> 9 --> 4 
+sum(GVP$`Volcano Name` == "FALSE", na.rm = TRUE) # --> 34 --> 11
+# There are different numbers for the same "Unnamed" and FALSE" name.
+# There are 4 different numbers associated to "Unnamed", there are 11 different numbers associated to "FALSE".
+
+```
+
+
+But when we do 1+4+11 it is equal to 16, so Volcano name and number still don't match. How so ? 
+Maybe there is a duplicate name with two different number. (see length(unique(no_name$`Volcano Number`))
+)
+
+But let's clean the database first.
+
+
+
+We don't keep those.
+
+```{r}
+
+no_name = GVP %>% dplyr::filter(`Volcano Name` == "FALSE" | `Volcano Name` == "Unnamed" | `Volcano Name` == "Unknown Source")
+
+length(unique(no_name$`Volcano Number`))
+
+```
+
+
+
+Let's dplyr::filter no_name out of GVP.
+
+```{r}
+
+GVP_known = GVP %>% dplyr::filter(!`Volcano Number` %in% no_name$`Volcano Number`)
+
+
+length(unique(GVP_known$`Volcano Name`)) # --> 676
+length(unique(GVP_known$`Volcano Number`)) # --> 678
+
+```
+
+
+Let's find the duplicates.
+
+```{r}
+
+GVP_known %>%
+  group_by(`Volcano Name`) %>%
+  summarise(n_numbers = n_distinct(`Volcano Number`)) %>%
+  dplyr::filter(n_numbers > 1)
+
+```
+
+
+
+There are two duplicated named volcanoes Azul Cerro (Galapagos and Chile) and Sumbing (2 volcanoes in Indonesia). 
+Volcano name is not unique but volcano number is unique.
+
+Dr. Bebbington's remark : "These are different volcanoes (the first two are both named ‘blue hill’). The GVP number is unique, but locals sometimes applied the same name to ‘their’ volcano. Particularly common with ‘Fuego’."
+
+Azul, Cerro (Chile) : Quizapu 357060
+Azul, Cerro (Galápagos) : Le Cumbre 353060
+
+Gunung Sumbing of Java (Indonesia) 263220
+Gunung Sumbing of Sumatra (Indonesia) 261180
+
+
+
+Let's give it a new name.
+
+```{r}
+
+# for Azul, Cerro
+
+GVP_known$`Volcano Name`[GVP_known$`Volcano Number` == 357060] <- "Azul, Cerro / Quizapu (Chile)"
+
+GVP_known$`Volcano Name`[GVP_known$`Volcano Number` == 353060] <- "Azul, Cerro (Galapagos)"
+
+
+# for Sumbing
+
+GVP_known$`Volcano Name`[GVP_known$`Volcano Number` == 263220] <- "Sumbing, Java"
+
+GVP_known$`Volcano Name`[GVP_known$`Volcano Number` == 261180] <- "Sumbing, Sumatra"
+
+
+```
+
+
+
+***Odd named volcanoes :*** 
+Campi Flegrei and Campi Flegrei del Mar di Sicilia (update 23/06/25 : dont delete)
+Hudson Mt and Hudson, Cerro (keep)
+Negra, Sierra and Negro, Cerro (keep)
+Adam's and Adam's seamount (delete adams seamount)
+
+Are these duplicated or just very similarly named volcanoes ?
+
+
+## Submarine
+
+Submarine volcanoes ?
+Protector seamounts
+Havre seamount
+Home reef
+Kick'em Jenny
+
+```{r find submarine}
+
+# submarine n=54
+submarine =  GVP_known %>% 
+  dplyr::filter(grepl("submarine", `Area of Activity`, ignore.case = T) | grepl("submarine", `Volcano Name`, ignore.case = T) | grepl("seamount", `Volcano Name`, ignore.case = T) )
+
+print(submarine)
+```
+
+```{r remove submarine}
+# remove submarine volcanoes 
+GVP_known_land = GVP_known %>% dplyr::filter(!`Volcano Number` %in% submarine$`Volcano Number`)
+
+
+removed = nrow(GVP_known) - nrow(GVP_known_land)
+
+```
+
+
+Removed submarine and seamount labeled observations, this removes `r removed`. 
+
+
+
+Should we remove things that say 'reef' or 'sea'? --> YES
+
+```{r}
+
+sea_and_reef =  GVP_known_land %>% 
+  dplyr::filter(grepl("sea", `Area of Activity`, ignore.case = T) | grepl("GVP_known_land", `Volcano Name`, ignore.case = T) | grepl("reef", `Volcano Name`, ignore.case = T) | grepl("reef", `Area of Activity`, ignore.case = T))
+
+
+GVP_known_land_2 = GVP_known_land %>% dplyr::filter(!`Volcano Number` %in% sea_and_reef$`Volcano Number`)
+
+
+```
+
+
+I think I removed all the volcanoes that were related to water. 
+
+--> How to verify/make sure ?
+
+update 28/05/25 -> give to Mark and Mel
+
+
+
+```{r}
+names(GVP_known_land_2)
+
+#write.csv(GVP_known_land_2, file = "/Users/annad/Documents/NZ Internship/GVP_known_land_2.csv", row.names = FALSE)
+
+```
+
+
+
+update 05/05/2025
+
+Let's see how many volcano names we have.
+
+
+```{r}
+
+length(unique(GVP_known_land_2$`Volcano Name`))
+length(unique(GVP_known_land_2$`Volcano Number`))
+length(unique(GVP_known_land_2$`Eruption Number`))
+```
+
+
+We have 645 unique different volcano names. 
+
+###########################################################################
+
+Let's create a df with only the unique volcano names/number.
+
+
+```{r}
+
+unique_volcano <- GVP_known_land_2 #copy of GVP_known_land_2
+unique_volcano <- as.data.frame(unique_volcano) # now we can modify without worry
+
+
+length(unique(unique_volcano$`Volcano Name`))
+length(unique(unique_volcano$`Volcano Number`))
+```
+
+
+
+Let's dplyr::dplyr::filter all the same rows.
+
+(.keep_all = TRUE sert à garder les autres colonnes filtrées également. Si on ne met pas ça, seule la colonne où on filtre est conservée.)
+
+```{r}
+
+unique_volcano <- unique_volcano %>%
+  distinct(`Volcano Number`, .keep_all = TRUE)
+
+```
+
+
+
+
+```{r}
+#write.csv(unique_volcano, file = "/Users/annad/Documents/NZ Internship/unique_volcano.csv", row.names = FALSE)
+```
+
+
+update 29/05/25 
+
+lets search if we have any submarine volcanoes that we missed
+
+```{r}
+
+volcano_list = read_xlsx("/Users/annad/Documents/NZ Internship/volcano list.xlsx")
+
+# Nettoyer les noms pour éviter les erreurs de casse ou d'espaces
+#submarine_volc <- volcano_list %>%
+ # mutate(name_clean = trimws(tolower(`Volcano Name`)))
+
+#unique_volcano <- unique_volcano %>%
+#  mutate(name_clean = trimws(tolower(`Volcano Name`)))
+
+# Vérifier quels noms de unique_volcano sont dans volcano_list
+#matches <- unique_volcano %>%
+ # dplyr::dplyr::filter(name_clean %in% volcano_list$name_clean)
+
+matches <- unique_volcano %>%
+  dplyr::filter(`Volcano Name` %in% volcano_list$`Volcano Name`)
+
+
+# Afficher les correspondances
+print(matches)
+
+```
+
+
+
