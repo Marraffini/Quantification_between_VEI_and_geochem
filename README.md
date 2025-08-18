@@ -3,10 +3,22 @@ where the data come from (+ dates) + static versions of the data (cant use more 
 what is the goal of the project
 author of code
 aknowledgments
+## Project description:
+The data and code provided here act as a record of work by Anna Dufay April-August 2025 in partnership with Massey University. 
+
+This study focuses on Holocene eruptions (within the last ~11,700 years) from subaerial volcanoes (located on land), and aims to explore and quantify the relationship between whole-rock geochemical data and eruption explosivity. Using publicly available sources, it investigates how the composition of erupted materials may be linked to VEI scores.
+
+Understanding the link between the chemical composition of volcanic rocks and the explosivity of eruptions is essential for improving volcanic hazard assessment. While databases like AVO, GVP, and GEOROC provide extensive information on eruptions and rock geochemistry, the relationship between these two aspects remains complex and not fully quantified. Despite the usefulness of all three of these publically available data bases there are is no piece of consistently overlapping information that can be used to join the databases together. At this time linking must be done manually. 
+
+Disclaimer:
+Scine the databases must be linked manually the code provided in this repository is unlikely to work of future versions of the data from these databases.
 
 ## Data (from where and which date)
 
--> AVO database comes from this website (I can't seem to find the link from where I downloaded it).
+-> AVO database comes from this website: [https://avo.alaska.edu/](https://avo.alaska.edu/explore/)
+Reference: 
+https://dggs.alaska.gov/webpubs/dggs/dds/text/dds008v2.pdf
+Date downloaded:
 
 -> GVP data has two files, one xlsx and one csv. 
     GVP.xlsx was downloaded on 11 April 2025, from this link https://volcano.si.edu/database/GVP_Eruption_Search_Result.xlsx or this link https://volcano.si.edu/search_eruption.cfm.
@@ -20,7 +32,7 @@ It was downloaded from this website, following : Query By > Petrography and samp
 
 ### GEOROC
 
-There are many rmd for this particular database. For each type of rocks, actually. I will explain with one type, since the process is the same for the rest. 
+There are many rmd for each type of rock in this database. Below I use one rock type as an example, since the process is the same for the rest. 
 Say we want to work on the alkaline type of rock. Rmd is called alkaline rocks.rmd. 
 In the alkaline rocks, there are different types of sub rocks. I don't know why, but when I downloaded the csv, it was either the csv type or csv2 type. Put them in different folders (for the code to work).
 I then created two different csv/df within those subrock csv, one for the samples and one for the references. 
