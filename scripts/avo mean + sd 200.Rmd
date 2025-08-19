@@ -30,8 +30,8 @@ library(e1071)
 
 
 ```{r}
-
-avo_filtered <- read_csv("/Users/annad/Documents/NZ Internship/avo_filtered.csv", show_col_types = FALSE)
+# setwd to source file location then use the below relative path
+avo_filtered <- read_csv("../data/Cleaned/avo_filtered.csv", show_col_types = FALSE)
 
 
 ```
@@ -1388,7 +1388,7 @@ lets add the vei 7 eruptions
 
 
 ```{r}
-rocks_all_info_vei_7 = read_csv("/Users/annad/Documents/NZ Internship/rocks_all_info_vei_7_160725.csv")
+rocks_all_info_vei_7 = read_csv("../data/Cleaned/rocks_all_info_vei_7_160725.csv")
 ```
 
 # add a vei column 
