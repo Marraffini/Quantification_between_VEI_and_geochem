@@ -450,7 +450,7 @@ mean(results_nb_df$Weighted_Accuracy) # 0.4174349
 
 
 
-RF
+# RF
 
 ```{r}
 ## to delete if using only one split and fold
@@ -615,7 +615,7 @@ mean(results_svm_df$Weighted_Accuracy) #0.3348889
 vei needs to be ordered
 
 
-ORF (works but takes so long idk why ?? i have to stop it)
+# ORF (works but takes so long idk why ?? i have to stop it)
 
 ```{r}
 results_orf <- list()  # List to store all ORF results
@@ -816,7 +816,7 @@ graphs of the results above
 
 # lda and nb only
 
-```{r}
+```{r, eval=FALSE}
 
 
 df_true <- eruption_summary_oxides_vei_volcano %>%
@@ -1091,7 +1091,7 @@ p_facets_circles_border
 
 
 
-add some vei 7 eruptions into the models
+# add some vei 7 eruptions into the models
 
 ```{r}
 rocks_all_info_vei_7 = read_csv("/Users/annad/Documents/NZ Internship/rocks_all_info_vei_7_160725.csv")
@@ -1259,7 +1259,7 @@ print(result_vei7_nb)
 lets see with rf -> yes
 
 ```{r}
-library(randomForest)
+library(ranger)
 
 train_rf <- eruption_summary_oxides_vei_volcano %>%
   dplyr::filter(New_Vei %in% 1:6) %>%
@@ -1269,25 +1269,32 @@ train_rf <- eruption_summary_oxides_vei_volcano %>%
 X_rf <- train_rf[, X_sd_cols]
 y_rf <- train_rf$New_Vei
 
-model_rf <- randomForest(
+model_rf <- ranger(
   x = X_rf,
   y = y_rf,
-  ntree = 500,
-  importance = TRUE
+  num.trees   = 500,
+  importance  = "impurity",
+  probability = TRUE
 )
 
 
-probs_vei7_rf <- predict(model_rf, newdata = eruption_summary_vei7_cubersd[, X_sd_cols], type = "prob")
-pred_classes_vei7_rf <- predict(model_rf, newdata = eruption_summary_vei7_cubersd[, X_sd_cols], type = "response")
+probs_mat <- predict(model_rf, data = eruption_summary_vei7_cubersd[, X_sd_cols])$predictions
+probs_df  <- as.data.frame(probs_mat)
+
+colnames(probs_df) <- colnames(probs_mat)
+
+pred_cls <- colnames(probs_mat)[max.col(probs_mat, ties.method = "first")]
 
 result_vei7_rf <- cbind(
-  Eruption = eruption_summary_vei7_cubersd$Eruption,
-  Predicted_Class = pred_classes_vei7_rf,
-  probs_vei7_rf
+  Eruption        = eruption_summary_vei7_cubersd$Eruption,
+  Predicted_Class = pred_cls,
+  probs_df
 )
 
 
 print(result_vei7_rf)
+
+
 ```
 
 lda 
@@ -1384,70 +1391,58 @@ print(result_vei7_polr)
 ```
 
 
-orf --> dont work idk why
+#orf --> dont work idk why -> works now, but different code
 
-```{r, eval=FALSE}
+```{r}
+# --- Libraries ---
 library(ordinalForest)
+library(dplyr)
 
+
+# --- 1) Training data (ordered factor, numeric predictors, no NA) ---
 train_orf <- eruption_summary_oxides_vei_volcano %>%
   dplyr::filter(New_Vei %in% 1:6) %>%
-  mutate(New_Vei = factor(New_Vei, ordered = TRUE)) %>% 
-  dplyr::select(New_Vei, all_of(X_sd_cols)) %>%
-  na.omit()
+  dplyr::select(New_Vei, dplyr::all_of(X_sd_cols)) %>%
+  mutate(New_Vei = factor(New_Vei, ordered = TRUE, levels = as.character(1:6))) %>%
+  dplyr::filter(complete.cases(.))
 
+# --- 2) Fit ORF ---
 model_orf <- ordfor(
-  depvar = "New_Vei",
-  data = train_orf,
-  nsets = 100,             
-  ntreeperdiv = 50,        
-  ntreefinal = 100,        
-  perffunction = "probability"  
+  depvar       = "New_Vei",
+  data         = as.data.frame(train_orf),
+  nsets        = 500,
+  ntreeperdiv  = 100,
+  ntreefinal   = 500,
+  perffunction = "probability"
 )
 
-new_X_orf <- eruption_summary_vei7_cubersd[, X_sd_cols]
-complete_rows <- complete.cases(new_X_orf)
-new_X_orf <- new_X_orf[complete_rows, ]
+# --- 3) Prepare test data ---
+test_orf <- eruption_summary_vei7_cubersd[, setdiff(names(train_orf), "New_Vei"), drop = FALSE]
+ok <- complete.cases(test_orf)
+eruption_ids <- eruption_summary_vei7_cubersd$Eruption[ok]
+test_orf <- test_orf[ok, , drop = FALSE]
 
+# --- 4) Predict class + probs ---
+pred_orf <- predict(model_orf, newdata = as.data.frame(test_orf))
 
-pred_orf <- predict(model_orf, newdata = new_X_orf)
+# Keep probabilities as matrix to preserve column names
+probs_mat <- pred_orf$classprobs
+colnames(probs_mat) <- as.character(1:ncol(probs_mat))  # <- force names "1","2",...
 
+# Convert to data.frame without renaming cols to v1, v2...
+probs_df <- as.data.frame(probs_mat, check.names = FALSE)
+
+# --- 5) Final result ---
 result_vei7_orf <- cbind(
-  Eruption = eruption_summary_vei7_cubersd$Eruption[complete_rows],
-  Predicted_Class = pred_orf$classpred,
-  pred_orf$probabilities
+  Eruption        = eruption_ids,
+  Predicted_Class = as.character(pred_orf$ypred),
+  probs_df
 )
 
+# Preview
 print(result_vei7_orf)
 
 ```
-
-
-i dont think its possible ??
-```{r, eval=FALSE}
-# list with results per model
-results_list2 <- list(
-  lda = result_vei7_lda,
-  nb = result_vei7_nb,
-  rf = result_vei7_rf,
-  #orf = result_vei7_orf,
-  svm = result_vei7_svm,
-  polr = result_vei7_polr
-)
-
-# mean of the numeric columns for each model
-results_means_sd2 <- lapply(results_list2, function(df) {
-  df <- as.data.frame(df)  
-  num_cols <- sapply(df, is.numeric)
-  colMeans(df[, num_cols, drop = FALSE], na.rm = TRUE)
-})
-
-
-print(results_means_sd2)
-
-```
-
-
-
 
 
 graphs for the results
@@ -1550,6 +1545,100 @@ ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
   scale_color_manual(values = model_colors) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
+
+
+
+
+
+
+library(ggplot2)
+library(dplyr)
+
+# --- 1) Build individual data.frames for each model ---
+df_nb <- as.data.frame(result_vei7_nb) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "NB")
+
+df_rf <- as.data.frame(result_vei7_rf) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "RF")
+
+df_lda <- as.data.frame(result_vei7_lda) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "LDA")
+
+df_svm <- as.data.frame(result_vei7_svm) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "SVM")
+
+df_polr <- as.data.frame(result_vei7_polr) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "POLR")
+
+df_orf <- as.data.frame(result_vei7_orf) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "ORF")
+
+dfs <- list(df_nb, df_rf, df_lda, df_svm, df_polr, df_orf)
+
+# --- 2) Harmonize probability columns across data.frames ---
+# a) Collect all probability column names that look like "1","2",...
+all_prob_names <- dfs %>%
+  lapply(function(df) grep("^[0-9]+$", names(df), value = TRUE)) %>%
+  unlist() %>% unique() %>% sort()
+
+# b) Standardize each df
+dfs <- lapply(dfs, function(df) {
+  df <- as.data.frame(df)
+  
+  # Force type for identifiers
+  df$Eruption <- as.character(df$Eruption)
+  df$Predicted_VEI <- as.character(df$Predicted_VEI)
+  
+  # Add missing probability columns with NA
+  missing <- setdiff(all_prob_names, names(df))
+  for (m in missing) df[[m]] <- NA_real_
+  
+  # Convert all probability columns to numeric
+  df[all_prob_names] <- lapply(df[all_prob_names], function(x) as.numeric(as.character(x)))
+  
+  df
+})
+
+# --- 3) Restore factor levels for Predicted_VEI (your original step) ---
+dfs <- lapply(dfs, function(df) {
+  df$Predicted_VEI <- factor(df$Predicted_VEI, levels = as.character(1:7))
+  df$Eruption <- as.character(df$Eruption)
+  df
+})
+
+# --- 4) Bind all dfs together ---
+df_all <- dplyr::bind_rows(dfs)
+
+
+
+
+model_colors <- c(
+  "NB" = "steelblue",
+  "RF" = "darkorange",
+  "LDA" = "seagreen",
+  "SVM" = "firebrick",
+  "POLR" = "purple",
+  "ORF" = "blue"
+)
+
+ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
+  geom_point(size = 4, alpha = 0.8, position = position_dodge(width = 0.6)) +
+  theme_minimal() +
+  labs(
+    title = "Predicted VEI for VEI 7 Eruptions by Model",
+    x = "Eruption",
+    y = "Predicted VEI"
+  ) +
+  scale_color_manual(values = model_colors) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
 ```
 
 
@@ -1623,9 +1712,9 @@ rf
 ```{r}
 
 
-library(randomForest)
+library(ranger)
 
-model_rf_aug <- randomForest(
+model_rf_aug <- ranger(
   x = train_augmented[, X_sd_cols],
   y = train_augmented$New_Vei,
   ntree = 500,
@@ -1644,6 +1733,60 @@ result_rf_aug <- cbind(
 )
 
 print(result_rf_aug)
+
+
+
+
+
+library(dplyr)
+library(tidyr)
+library(ranger)
+
+# --- Data prep (concise) ---
+safe_features <- intersect(X_sd_cols, colnames(eruption_summary_oxides_vei_volcano))
+
+vei7_to_add <- eruption_summary_vei7_cubersd %>%
+  dplyr::filter(Eruption %in% c("Crater Lake 5750 BCE", "Santorini 1600 BCE", "Rinjani 1257")) %>%
+  mutate(New_Vei = 7)
+
+train_augmented <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:7) %>%
+  bind_rows(vei7_to_add) %>%
+  dplyr::select(New_Vei, all_of(safe_features)) %>%
+  drop_na() %>%
+  mutate(New_Vei = factor(New_Vei, levels = as.character(1:7)))
+
+vei7_holdout_clean <- eruption_summary_vei7_cubersd %>%
+  dplyr::filter(!Eruption %in% c("Crater Lake 5750 BCE", "Santorini 1600 BCE", "Rinjani 1257")) %>%
+  dplyr::select(Eruption, all_of(safe_features)) %>%
+  drop_na()
+
+# --- Train ---
+rf_formula <- as.formula(paste("New_Vei ~", paste(safe_features, collapse = " + ")))
+model_rf_aug <- ranger(
+  rf_formula, data = train_augmented,
+  num.trees = 500, probability = TRUE, importance = "permutation", seed = 42
+)
+
+# --- Predict ---
+pred_rf <- predict(model_rf_aug, data = dplyr::select(vei7_holdout_clean, all_of(safe_features)))
+probs_rf_aug <- as.data.frame(pred_rf$predictions, check.names = FALSE)
+
+# noms simples 1,2,3,...
+colnames(probs_rf_aug) <- levels(train_augmented$New_Vei)
+
+# classe gagnante
+pred_rf_aug <- colnames(probs_rf_aug)[max.col(probs_rf_aug, "first")]
+
+# --- Résultat ---
+result_rf_aug <- bind_cols(
+  vei7_holdout_clean %>% dplyr::select(Eruption),
+  tibble(Predicted_Class = factor(pred_rf_aug, levels = levels(train_augmented$New_Vei), ordered = TRUE)),
+  probs_rf_aug
+)
+
+print(result_rf_aug)
+
 
 ```
 lda
@@ -1713,6 +1856,57 @@ print(result_polr_aug)
 
 ```
 
+# orf
+
+```{r}
+library(ordinalForest)
+library(dplyr)
+library(tibble)
+
+# --- Train (ordered target; drop NA rows) ---
+train_orf <- train_augmented %>%
+  dplyr::select(New_Vei, dplyr::all_of(X_sd_cols)) %>%
+  mutate(New_Vei = factor(New_Vei, ordered = TRUE)) %>%
+  dplyr::filter(complete.cases(.))
+
+set.seed(123)
+model_orf <- ordfor(
+  depvar       = "New_Vei",
+  data         = as.data.frame(train_orf),
+  nsets        = 1000,
+  ntreeperdiv  = 100,
+  ntreefinal   = 500,
+  perffunction = "probability"
+)
+
+# --- Test set ---
+test_orf <- vei7_holdout %>%
+  dplyr::select(Eruption, dplyr::all_of(X_sd_cols))
+
+ok <- complete.cases(test_orf[, X_sd_cols])
+eruption_ids <- test_orf$Eruption[ok]
+X_test <- test_orf[ok, X_sd_cols, drop = FALSE]
+
+# --- Predictions ---
+pred <- predict(model_orf, newdata = as.data.frame(X_test))
+
+# Probabilities (data.frame with colnames "1","2",...)
+probs_orf_aug <- as.data.frame(pred$classprobs, check.names = FALSE)
+colnames(probs_orf_aug) <- as.character(seq_len(ncol(probs_orf_aug)))
+
+# Predicted class
+pred_orf_aug <- as.character(pred$ypred)
+
+# --- Final result ---
+result_orf_aug <- cbind(
+  Eruption = eruption_ids,
+  Predicted_Class = pred_orf_aug,
+  probs_orf_aug
+)
+
+print(result_orf_aug)
+
+```
 
 
 
@@ -1773,14 +1967,14 @@ df_nb <- data.frame(
   Eruption = vei7_holdout$Eruption[complete.cases(X_pred_nb)],
   Predicted_VEI = pred_nb_aug,
   probs_nb_aug,
-  Model = "Naive Bayes"
+  Model = "NB"
 )
 
 df_rf <- data.frame(
   Eruption = vei7_holdout$Eruption,
   Predicted_VEI = pred_rf_aug,
   probs_rf_aug,
-  Model = "Random Forest"
+  Model = "RF"
 )
 
 df_lda <- data.frame(
@@ -1804,9 +1998,16 @@ df_polr <- data.frame(
   Model = "POLR"
 )
 
+df_orf <- data.frame(
+  Eruption = vei7_holdout$Eruption,
+  Predicted_VEI = pred_orf_aug,
+  probs_orf_aug,
+  Model = "ORF"
+)
+
 vei_levels <- as.character(1:7)
 
-dfs <- list(df_nb, df_rf, df_lda, df_svm, df_polr)
+dfs <- list(df_nb, df_rf, df_lda, df_svm, df_polr, df_orf)
 
 dfs <- lapply(dfs, function(df) {
   df$Predicted_VEI <- factor(df$Predicted_VEI, levels = vei_levels, ordered = TRUE)
@@ -1819,11 +2020,12 @@ df_all <- bind_rows(dfs)
 df_all$Eruption <- factor(df_all$Eruption, levels = unique(df_all$Eruption))
 
 model_colors <- c(
-  "Naive Bayes" = "steelblue",
-  "Random Forest" = "darkorange",
+  "NB" = "steelblue",
+  "RF" = "darkorange",
   "LDA" = "seagreen",
   "SVM" = "firebrick",
-  "POLR" = "purple"
+  "POLR" = "purple",
+  "ORF" = "blue"
 )
 
 ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
