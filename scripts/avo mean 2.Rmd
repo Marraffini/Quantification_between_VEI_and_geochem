@@ -614,6 +614,8 @@ vei needs to be ordered
 
 
 ```{r}
+library(randomForest)
+
 results_orf <- list()  # List to store all ORF results
 
 for (split in all_splits_summary) {
@@ -1433,35 +1435,46 @@ print(result_vei7_nb)
 # lets see with rf 
 
 ```{r}
-library(randomForest)
 
+library(ranger)
+
+# Entraînement
 train_rf <- eruption_summary_oxides_vei_volcano %>%
   dplyr::filter(New_Vei %in% 1:6) %>%
-  mutate(New_Vei = as.factor(New_Vei))  
+  mutate(New_Vei = as.factor(New_Vei))
 
 X_rf <- train_rf[, X_mean_cols]
 y_rf <- train_rf$New_Vei
 
-model_rf <- randomForest(
+model_rf <- ranger(
   x = X_rf,
   y = y_rf,
-  ntree = 500,
-  importance = TRUE
+  num.trees   = 500,
+  importance  = "impurity",
+  probability = TRUE
 )
 
+# Prédictions
+probs_mat <- predict(model_rf, data = eruption_summary_vei7[, X_mean_cols])$predictions
+probs_df  <- as.data.frame(probs_mat)
 
-probs_vei7_rf <- predict(model_rf, newdata = eruption_summary_vei7[, X_mean_cols], type = "prob")
-pred_classes_vei7_rf <- predict(model_rf, newdata = eruption_summary_vei7[, X_mean_cols], type = "response")
+# Renommer les colonnes avec juste le numéro de la classe
+colnames(probs_df) <- colnames(probs_mat)
+
+pred_cls <- colnames(probs_mat)[max.col(probs_mat, ties.method = "first")]
 
 result_vei7_rf <- cbind(
-  Eruption = eruption_summary_vei7$Eruption,
-  Predicted_Class = pred_classes_vei7_rf,
-  probs_vei7_rf
+  Eruption        = eruption_summary_vei7$Eruption,
+  Predicted_Class = pred_cls,
+  probs_df
 )
 
-
 print(result_vei7_rf)
+
+
 ```
+
+
 lda 
 
 ```{r}
@@ -1548,6 +1561,59 @@ print(result_vei7_polr)
 
 ```
 
+# #orf
+
+```{r}
+# --- Libraries ---
+library(ordinalForest)
+library(dplyr)
+
+
+# --- 1) Training data (ordered factor, numeric predictors, no NA) ---
+train_orf <- eruption_summary_oxides_vei_volcano %>%
+  dplyr::filter(New_Vei %in% 1:6) %>%
+  dplyr::select(New_Vei, dplyr::all_of(X_mean_cols)) %>%
+  mutate(New_Vei = factor(New_Vei, ordered = TRUE, levels = as.character(1:6))) %>%
+  dplyr::filter(complete.cases(.))
+
+# --- 2) Fit ORF ---
+model_orf <- ordfor(
+  depvar       = "New_Vei",
+  data         = as.data.frame(train_orf),
+  nsets        = 500,
+  ntreeperdiv  = 100,
+  ntreefinal   = 500,
+  perffunction = "probability"
+)
+
+# --- 3) Prepare test data ---
+test_orf <- eruption_summary_vei7[, setdiff(names(train_orf), "New_Vei"), drop = FALSE]
+ok <- complete.cases(test_orf)
+eruption_ids <- eruption_summary_vei7$Eruption[ok]
+test_orf <- test_orf[ok, , drop = FALSE]
+
+# --- 4) Predict class + probs ---
+pred_orf <- predict(model_orf, newdata = as.data.frame(test_orf))
+
+# Keep probabilities as matrix to preserve column names
+probs_mat <- pred_orf$classprobs
+colnames(probs_mat) <- as.character(1:ncol(probs_mat))  # <- force names "1","2",...
+
+# Convert to data.frame without renaming cols to v1, v2...
+probs_df <- as.data.frame(probs_mat, check.names = FALSE)
+
+# --- 5) Final result ---
+result_vei7_orf <- cbind(
+  Eruption        = eruption_ids,
+  Predicted_Class = as.character(pred_orf$ypred),
+  probs_df
+)
+
+# Preview
+print(result_vei7_orf)
+
+
+```
 
 
 
@@ -1599,17 +1665,19 @@ ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
 
 all models
 
+
 ```{r}
 library(ggplot2)
 library(dplyr)
 
+# --- 1) Build individual data.frames for each model ---
 df_nb <- as.data.frame(result_vei7_nb) %>%
   rename(Predicted_VEI = Predicted_Class) %>%
-  mutate(Model = "Naive Bayes")
+  mutate(Model = "NB")
 
 df_rf <- as.data.frame(result_vei7_rf) %>%
   rename(Predicted_VEI = Predicted_Class) %>%
-  mutate(Model = "Random Forest")
+  mutate(Model = "RF")
 
 df_lda <- as.data.frame(result_vei7_lda) %>%
   rename(Predicted_VEI = Predicted_Class) %>%
@@ -1623,24 +1691,56 @@ df_polr <- as.data.frame(result_vei7_polr) %>%
   rename(Predicted_VEI = Predicted_Class) %>%
   mutate(Model = "POLR")
 
-dfs <- list(df_nb, df_rf, df_lda, df_svm, df_polr)
+df_orf <- as.data.frame(result_vei7_orf) %>%
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "ORF")
 
+dfs <- list(df_nb, df_rf, df_lda, df_svm, df_polr, df_orf)
+
+# --- 2) Harmonize probability columns across data.frames ---
+# a) Collect all probability column names that look like "1","2",...
+all_prob_names <- dfs %>%
+  lapply(function(df) grep("^[0-9]+$", names(df), value = TRUE)) %>%
+  unlist() %>% unique() %>% sort()
+
+# b) Standardize each df
+dfs <- lapply(dfs, function(df) {
+  df <- as.data.frame(df)
+  
+  # Force type for identifiers
+  df$Eruption <- as.character(df$Eruption)
+  df$Predicted_VEI <- as.character(df$Predicted_VEI)
+  
+  # Add missing probability columns with NA
+  missing <- setdiff(all_prob_names, names(df))
+  for (m in missing) df[[m]] <- NA_real_
+  
+  # Convert all probability columns to numeric
+  df[all_prob_names] <- lapply(df[all_prob_names], function(x) as.numeric(as.character(x)))
+  
+  df
+})
+
+# --- 3) Restore factor levels for Predicted_VEI (your original step) ---
 dfs <- lapply(dfs, function(df) {
   df$Predicted_VEI <- factor(df$Predicted_VEI, levels = as.character(1:7))
   df$Eruption <- as.character(df$Eruption)
   df
 })
 
-df_all <- bind_rows(dfs)
+# --- 4) Bind all dfs together ---
+df_all <- dplyr::bind_rows(dfs)
 
-df_all$Eruption <- factor(df_all$Eruption, levels = unique(df_all$Eruption))
+
+
 
 model_colors <- c(
-  "Naive Bayes" = "steelblue",
-  "Random Forest" = "darkorange",
+  "NB" = "steelblue",
+  "RF" = "darkorange",
   "LDA" = "seagreen",
   "SVM" = "firebrick",
-  "POLR" = "purple"
+  "POLR" = "purple",
+  "ORF" = "blue"
 )
 
 ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
@@ -1654,8 +1754,8 @@ ggplot(df_all, aes(x = Eruption, y = Predicted_VEI, color = Model)) +
   scale_color_manual(values = model_colors) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-```
 
+```
 
 
 
@@ -1834,6 +1934,65 @@ print(result_polr_aug)
 
 ```
 
+orf
+
+```{r}
+library(ordinalForest)
+library(dplyr)
+library(tibble)
+
+# --- Train (ordered target; drop NA rows) ---
+train_orf <- train_augmented %>%
+  dplyr::select(New_Vei, dplyr::all_of(X_mean_cols)) %>%
+  mutate(New_Vei = factor(New_Vei, ordered = TRUE)) %>%
+  dplyr::filter(complete.cases(.))
+
+# --- Fit ORF (probabilities enabled) ---
+set.seed(123)
+model_orf <- ordfor(
+  depvar       = "New_Vei",
+  data         = as.data.frame(train_orf),
+  nsets        = 1000,
+  ntreeperdiv  = 100,
+  ntreefinal   = 500,
+  perffunction = "probability"
+)
+
+# --- Test prep (same predictors; drop NA rows) ---
+test_orf <- vei7_holdout %>%
+  dplyr::select(Eruption, dplyr::all_of(X_mean_cols))
+
+ok <- complete.cases(test_orf[, X_mean_cols])
+eruption_ids <- test_orf$Eruption[ok]
+X_test <- test_orf[ok, X_mean_cols, drop = FALSE]
+
+# --- Predict once; extract class labels and probs ---
+pred <- predict(model_orf, newdata = as.data.frame(X_test))
+
+# Keep original class-probability column names ("1","2",...) and prevent renaming
+probs_mat <- pred$classprobs                              # matrix n x K
+# ensure names are exactly "1","2",... (some builds carry them already)
+if (is.null(colnames(probs_mat))) {
+  colnames(probs_mat) <- as.character(seq_len(ncol(probs_mat)))
+}
+probs_df <- as.data.frame(probs_mat, check.names = FALSE) # <- do NOT rename to v1,v2
+
+# --- Final result with names "1","2",... preserved ---
+result_orf_aug <- dplyr::bind_cols(
+  tibble(Eruption = eruption_ids, Predicted_Class = as.character(pred$ypred)),
+  probs_df
+)
+
+# (optional) make sure prob columns are numeric for later bind_rows()
+prob_cols <- grep("^[0-9]+$", names(result_orf_aug), value = TRUE)
+result_orf_aug[prob_cols] <- lapply(result_orf_aug[prob_cols], function(x) as.numeric(as.character(x)))
+
+print(result_orf_aug)
+
+
+
+```
+
 
 
 
@@ -1889,11 +2048,11 @@ library(dplyr)
 
 df_nb_aug <- as.data.frame(result_vei7_nb_aug) %>%
   rename(Predicted_VEI = Predicted_Class) %>%
-  mutate(Model = "Naive Bayes")
+  mutate(Model = "NB")
 
 df_rf_aug <- as.data.frame(result_rf_aug) %>%
   rename(Predicted_VEI = Predicted_Class) %>%
-  mutate(Model = "Random Forest")
+  mutate(Model = "RF")
 
 df_lda_aug <- as.data.frame(result_lda_aug) %>%
   rename(Predicted_VEI = Predicted_Class) %>%
@@ -1907,7 +2066,11 @@ df_polr_aug <- as.data.frame(result_polr_aug) %>%
   rename(Predicted_VEI = Predicted_Class) %>%
   mutate(Model = "POLR")
 
-dfs_aug <- list(df_nb_aug, df_rf_aug, df_lda_aug, df_svm_aug, df_polr_aug)
+df_orf_aug <- as.data.frame(result_orf_aug) %>% 
+  rename(Predicted_VEI = Predicted_Class) %>%
+  mutate(Model = "ORF")
+
+dfs_aug <- list(df_nb_aug, df_rf_aug, df_lda_aug, df_svm_aug, df_polr_aug, df_orf_aug)
 
 dfs_aug <- lapply(dfs_aug, function(df) {
   df$Predicted_VEI <- factor(df$Predicted_VEI, levels = as.character(1:7))
@@ -1915,16 +2078,44 @@ dfs_aug <- lapply(dfs_aug, function(df) {
   df
 })
 
+all_classes <- as.character(1:7)
+
+harmonize <- function(df) {
+  # enlever un éventuel préfixe "Prob_"
+  names(df) <- sub("^Prob_", "", names(df))
+  
+  # types et niveaux cohérents
+  df$Eruption <- as.character(df$Eruption)
+  df$Predicted_VEI <- factor(df$Predicted_VEI, levels = all_classes)
+  
+  # coercition des colonnes proba en numeric
+  prob_cols <- intersect(names(df), all_classes)
+  df[prob_cols] <- lapply(df[prob_cols], function(x) as.numeric(as.character(x)))
+  
+  # ajouter colonnes manquantes (si besoin)
+  missing <- setdiff(all_classes, prob_cols)
+  if (length(missing) > 0) df[missing] <- NA_real_
+  
+  # ordre des colonnes (facultatif mais pratique)
+  df <- df[, c("Eruption", "Predicted_VEI", all_classes, "Model")]
+  df
+}
+
+dfs_aug <- lapply(dfs_aug, harmonize)
+df_all_aug <- dplyr::bind_rows(dfs_aug)
+
+
 df_all_aug <- bind_rows(dfs_aug)
 
 df_all_aug$Eruption <- factor(df_all_aug$Eruption, levels = unique(df_all_aug$Eruption))
 
 model_colors_aug <- c(
-  "Naive Bayes" = "steelblue",
-  "Random Forest" = "darkorange",
+  "NB" = "steelblue",
+  "RF" = "darkorange",
   "LDA" = "seagreen",
   "SVM" = "firebrick",
-  "POLR" = "purple"
+  "POLR" = "purple",
+  "ORF" = "blue"
 )
 
 ggplot(df_all_aug, aes(x = Eruption, y = Predicted_VEI, color = Model)) +

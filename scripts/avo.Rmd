@@ -126,6 +126,9 @@ avo <- avo %>%
 
 
 
+here i delete ht rows where oxides are na
+this means i still have rows where i can have 8 oxides and 2 missing oxides
+
 ```{r}
 # major oxides
 oxydes_keywords <- c("SiO2", "TiO2", "Al2O3", "FeOT", "MnO", "MgO", 
@@ -280,6 +283,12 @@ avo_with_missing_oxides <- avo_with_confirmed_eruption %>%
 ```
 
 
+```{r}
+length(unique(avo_with_confirmed_eruption2$Volcano))
+length(unique(avo_with_confirmed_eruption2$Eruption))
+
+
+```
 
 
 
@@ -526,7 +535,11 @@ how many samples now
 
 ```{r}
 sum(eruption_summary$Number_of_Samples)
+
+length(unique(eruption_summary$Eruption))
+length(unique(eruption_summary$`Volcano Name`))
 ```
+
 
 
 how many na ?
